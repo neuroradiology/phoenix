@@ -1,15 +1,9 @@
 defmodule Phoenix.Router.RoutingTest do
   use ExUnit.Case, async: true
-  use ConnHelper
-
-  setup do
-    Logger.disable(self())
-    :ok
-  end
+  use RouterHelper
 
   defmodule UserController do
     use Phoenix.Controller
-    plug :action
     def index(conn, _params), do: text(conn, "users index")
     def show(conn, _params), do: text(conn, "users show")
     def top(conn, _params), do: text(conn, "users top")
@@ -18,6 +12,8 @@ defmodule Phoenix.Router.RoutingTest do
     def trace(conn, _params), do: text(conn, "users trace")
     def not_found(conn, _params), do: text(put_status(conn, :not_found), "not found")
     def image(conn, _params), do: text(conn, conn.params["path"] || "show files")
+    def move(conn, _params), do: text(conn, "users move")
+    def any(conn, _params), do: text(conn, "users any")
   end
 
   defmodule Router do
@@ -26,6 +22,7 @@ defmodule Phoenix.Router.RoutingTest do
     get "/", UserController, :index, as: :users
     get "/users/top", UserController, :top, as: :top
     get "/users/:id", UserController, :show, as: :users
+    get "/spaced users/:id", UserController, :show
     get "/profiles/profile-:id", UserController, :show
     get "/route_that_crashes", UserController, :crash
     get "/files/:user_name/*path", UserController, :image
@@ -35,9 +32,16 @@ defmodule Phoenix.Router.RoutingTest do
     trace "/trace", UserController, :trace
     options "/options", UserController, :options
     connect "/connect", UserController, :connect
+    match :move, "/move", UserController, :move
+    match :*, "/any", UserController, :any
 
     get "/users/:user_id/files/:id", UserController, :image
     get "/*path", UserController, :not_found
+  end
+
+  setup do
+    Logger.disable(self())
+    :ok
   end
 
   test "get root path" do
@@ -51,12 +55,15 @@ defmodule Phoenix.Router.RoutingTest do
     assert conn.status == 200
     assert conn.resp_body == "users show"
     assert conn.params["id"] == "75f6306d-a090-46f9-8b80-80fd57ec9a41"
+    assert conn.path_params["id"] == "75f6306d-a090-46f9-8b80-80fd57ec9a41"
 
     conn = call(Router, :get, "users/75f6306d-a0/files/34-95")
     assert conn.status == 200
     assert conn.resp_body == "show files"
     assert conn.params["user_id"] == "75f6306d-a0"
+    assert conn.path_params["user_id"] == "75f6306d-a0"
     assert conn.params["id"] == "34-95"
+    assert conn.path_params["id"] == "34-95"
   end
 
   test "get with named param" do
@@ -64,6 +71,24 @@ defmodule Phoenix.Router.RoutingTest do
     assert conn.status == 200
     assert conn.resp_body == "users show"
     assert conn.params["id"] == "1"
+    assert conn.path_params["id"] == "1"
+  end
+
+  test "parameters are url decoded" do
+    conn = call(Router, :get, "/users/hello%20matey")
+    assert conn.params == %{"id" => "hello matey"}
+
+    conn = call(Router, :get, "/spaced%20users/hello%20matey")
+    assert conn.params == %{"id" => "hello matey"}
+
+    conn = call(Router, :get, "/spaced users/hello matey")
+    assert conn.params == %{"id" => "hello matey"}
+
+    conn = call(Router, :get, "/users/a%20b")
+    assert conn.params == %{"id" => "a b"}
+
+    conn = call(Router, :get, "/backups/a%20b/c%20d")
+    assert conn.params == %{"path" => ["a b", "c d"]}
   end
 
   test "get to custom action" do
@@ -109,10 +134,35 @@ defmodule Phoenix.Router.RoutingTest do
     assert conn.params["image"] == ["elixir", "logos", "main.png"]
   end
 
+  test "splat args are %encodings in path" do
+    conn = call(Router, :get, "backups/silly%20name")
+    assert conn.status == 200
+    assert conn.params["path"] == ["silly name"]
+  end
+
   test "catch-all splat route matches" do
     conn = call(Router, :get, "foo/bar/baz")
     assert conn.status == 404
     assert conn.params == %{"path" => ~w"foo bar baz"}
     assert conn.resp_body == "not found"
+  end
+
+  test "match on arbitrary http methods" do
+    conn = call(Router, :move, "/move")
+    assert conn.method == "MOVE"
+    assert conn.status == 200
+    assert conn.resp_body == "users move"
+  end
+
+  test "any verb matches" do
+    conn = call(Router, :get, "/any")
+    assert conn.method == "GET"
+    assert conn.status == 200
+    assert conn.resp_body == "users any"
+
+    conn = call(Router, :put, "/any")
+    assert conn.method == "PUT"
+    assert conn.status == 200
+    assert conn.resp_body == "users any"
   end
 end

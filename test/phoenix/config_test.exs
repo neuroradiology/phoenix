@@ -1,58 +1,65 @@
 defmodule Phoenix.ConfigTest do
-  # This test case needs to be sync because we rely on
-  # Phoenix.Config.Supervisor which is global.
-  use ExUnit.Case
+  use ExUnit.Case, async: true
   import Phoenix.Config
 
-  setup meta do
-    config = [parsers: false, custom: true, otp_app: :phoenix_config]
-    Application.put_env(:phoenix, meta.test, config)
-    :ok
+  @defaults [static: [at: "/"]]
+  @config [parsers: false, custom: true, otp_app: :phoenix_config]
+  @all @config ++ @defaults
+
+  test "reads configuration from env", meta do
+    Application.put_env(:config_app, meta.test, @config)
+    config = from_env(:config_app, meta.test, [static: true])
+    assert config[:parsers] == false
+    assert config[:custom]  == true
+    assert config[:static]  == true
   end
 
-  @defaults [static: [at: "/"]]
-
-  test "starts an ets table as part of the router handler", meta do
-    {:ok, _pid} = start_link(meta.test, @defaults)
+  test "starts an ets table as part of the module", meta do
+    {:ok, _pid} = start_link(meta.test, @all, @defaults)
     assert :ets.info(meta.test, :name) == meta.test
     assert :ets.lookup(meta.test, :parsers) == [parsers: false]
     assert :ets.lookup(meta.test, :static)  == [static: [at: "/"]]
     assert :ets.lookup(meta.test, :custom)  == [custom: true]
-
-    assert stop(meta.test) == :ok
-    assert :ets.info(meta.test, :name) == :undefined
   end
 
-  test "starts a supervised and reloadable router handler", meta do
-    {:ok, pid} = start_supervised(meta.test, @defaults)
-    Process.link(pid)
+  test "can change configuration", meta do
+    {:ok, _pid} = start_link(meta.test, @all, @defaults)
 
     # Nothing changed
-    reload([], [])
+    config_change(meta.test, [], [])
     assert :ets.lookup(meta.test, :parsers) == [parsers: false]
     assert :ets.lookup(meta.test, :static)  == [static: [at: "/"]]
     assert :ets.lookup(meta.test, :custom)  == [custom: true]
 
     # Something changed
-    reload([{meta.test, parsers: true}], [])
+    config_change(meta.test, [{meta.test, parsers: true}], [])
     assert :ets.lookup(meta.test, :parsers) == [parsers: true]
     assert :ets.lookup(meta.test, :static)  == [static: [at: "/"]]
     assert :ets.lookup(meta.test, :custom)  == []
 
-    # Router removed
-    reload([], [meta.test])
+    # Module removed
+    config_change(meta.test, [], [meta.test])
     assert :ets.info(meta.test, :name) == :undefined
   end
 
-  test "supports reloadable caches", meta do
-    {:ok, pid} = start_supervised(meta.test, @defaults)
-    Process.link(pid)
+  test "can cache", meta do
+    {:ok, _pid} = start_link(meta.test, @all, @defaults)
 
-    assert cache(meta.test, :__hello__, fn _ -> 1 end) == 1
-    assert cache(meta.test, :__hello__, fn _ -> 2 end) == 1
-    assert cache(meta.test, :__hello__, fn _ -> 3 end) == 1
+    assert cache(meta.test, :__hello__, fn _ -> {:nocache, 1} end) == 1
+    assert cache(meta.test, :__hello__, fn _ -> {:cache, 2} end) == 2
+    assert cache(meta.test, :__hello__, fn _ -> {:cache, 3} end) == 2
+    assert cache(meta.test, :__hello__, fn _ -> {:nocache, 3} end) == 2
 
-    reload([{meta.test, []}], [])
-    assert cache(meta.test, :__hello__, fn _ -> 4 end) == 4
+    # Cache is reloaded on config_change
+    config_change(meta.test, [{meta.test, []}], [])
+    assert cache(meta.test, :__hello__, fn _ -> {:nocache, 4} end) == 4
+    assert cache(meta.test, :__hello__, fn _ -> {:cache, 5} end) == 5
+    assert cache(meta.test, :__hello__, fn _ -> {:cache, 6} end) == 5
+
+    # Cache is cleaned on clear_cache
+    clear_cache(meta.test)
+    assert cache(meta.test, :__hello__, fn _ -> {:nocache, 7} end) == 7
+    assert cache(meta.test, :__hello__, fn _ -> {:cache, 8} end) == 8
+    assert cache(meta.test, :__hello__, fn _ -> {:cache, 9} end) == 8
   end
 end

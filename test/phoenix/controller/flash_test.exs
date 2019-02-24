@@ -1,135 +1,125 @@
 defmodule Phoenix.Controller.FlashTest do
   use ExUnit.Case, async: true
-  use ConnHelper
-  alias Phoenix.Controller.Flash
-  alias Phoenix.Controller.FlashTest.Router
+  use RouterHelper
 
-  def conn_with_session(session \\ %{}) do
-    %Conn{private: %{plug_session: session}}
-  end
-
-  setup_all do
-    Application.put_env :phoenix, Router,
-      http: false, https: false,
-      session: [store: :cookie, key: "_app"],
-      secret_key_base: String.duplicate("abcdefgh", 8)
-
-    defmodule FlashController do
-      use Phoenix.Controller
-
-      plug :action
-
-      def index(conn, _params) do
-        text conn, "hello"
-      end
-
-      def set_flash(conn, %{"notice" => notice, "status" => status}) do
-        {status, _} = Integer.parse(status)
-        conn |> Flash.put(:notice, notice) |> put_status(status) |> redirect(to: "/")
-      end
-    end
-
-    defmodule Router do
-      use Phoenix.Router
-
-      pipeline :browser do
-        plug :fetch_session
-      end
-
-      pipe_through :browser
-
-      get "/", FlashController, :index
-      get "/set_flash/:notice/:status", FlashController, :set_flash
-    end
-
-    Router.start()
-    on_exit &Router.stop/0
-    :ok
-  end
+  import Phoenix.Controller
 
   setup do
     Logger.disable(self())
     :ok
   end
 
-  test "flash is persisted when status in redirect" do
+  test "flash is persisted when status is a redirect" do
     for status <- 300..308 do
-      conn = call(Router, :get, "/set_flash/elixir/#{status}")
-      assert Flash.get(conn, :notice) == "elixir"
+      conn = conn(:get, "/") |> with_session |> fetch_flash()
+                             |> put_flash(:notice, "elixir") |> send_resp(status, "ok")
+      assert get_flash(conn, :notice) == "elixir"
+      assert get_resp_header(conn, "set-cookie") != []
+      conn = conn(:get, "/") |> recycle_cookies(conn) |> with_session |> fetch_flash()
+      assert get_flash(conn, :notice) == "elixir"
     end
   end
 
   test "flash is not persisted when status is not redirect" do
     for status <- [299, 309, 200, 404] do
-      conn = call(Router, :get, "/set_flash/elixir/#{status}")
-      assert Flash.get(conn, :notice) == nil
+      conn = conn(:get, "/") |> with_session |> fetch_flash()
+                             |> put_flash(:notice, "elixir") |> send_resp(status, "ok")
+      assert get_flash(conn, :notice) == "elixir"
+      assert get_resp_header(conn, "set-cookie") != []
+      conn = conn(:get, "/") |> recycle_cookies(conn) |> with_session |> fetch_flash()
+      assert get_flash(conn, :notice) == nil
     end
   end
 
-  test "get/1 returns the map of messages" do
-    conn = conn_with_session |> Flash.put(:notice, "hi")
-    assert Flash.get(conn) == %{notice: ["hi"]}
+  test "flash does not write to session when it is empty and no session exists" do
+    conn =
+      conn(:get, "/")
+      |> with_session()
+      |> fetch_flash()
+      |> clear_flash()
+      |> send_resp(302, "ok")
+
+    assert get_resp_header(conn, "set-cookie") == []
   end
 
-  test "get/2 returns the message by key" do
-    conn = conn_with_session |> Flash.put(:notice, "hi")
-    assert Flash.get(conn, :notice) == "hi"
+  test "flash writes to session when it is empty and a previous session exists" do
+    persisted_flash_conn =
+      conn(:get, "/")
+      |> with_session()
+      |> fetch_flash()
+      |> put_flash(:info, "existing")
+      |> send_resp(302, "ok")
+
+    conn =
+      conn(:get, "/")
+      |> Plug.Test.recycle_cookies(persisted_flash_conn)
+      |> with_session()
+      |> fetch_flash()
+      |> clear_flash()
+      |> send_resp(200, "ok")
+
+    assert ["_app=" <> _] = get_resp_header(conn, "set-cookie")
   end
 
-  test "get/2 returns the only the last message put" do
-    conn = conn_with_session
-    |> Flash.put(:notice, "hi")
-    |> Flash.put(:notice, "bye")
-    assert Flash.get(conn, :notice) == "bye"
+  test "get_flash/1 raises ArgumentError when flash not previously fetched" do
+    assert_raise ArgumentError, fn ->
+      conn(:get, "/") |> with_session |> get_flash()
+    end
   end
 
-  test "get/2 returns nil for missing key" do
-    conn = conn_with_session
-    assert Flash.get(conn, :notice) == nil
+  test "get_flash/1 returns the map of messages" do
+    conn = conn(:get, "/") |> with_session |> fetch_flash([]) |> put_flash(:notice, "hi")
+    assert get_flash(conn) == %{"notice" => "hi"}
   end
 
-  test "get_all/2 returns a list of messages by key" do
-    conn = conn_with_session
-    |> Flash.put(:notices, "hello")
-    |> Flash.put(:notices, "world")
-
-    assert Flash.get_all(conn, :notices) == ["hello", "world"]
+  test "get_flash/2 returns the message by key" do
+    conn = conn(:get, "/") |> with_session |> fetch_flash([]) |> put_flash(:notice, "hi")
+    assert get_flash(conn, :notice) == "hi"
+    assert get_flash(conn, "notice") == "hi"
   end
 
-  test "get_all/2 returns [] for missing key" do
-    conn = conn_with_session
-    assert Flash.get_all(conn, :notices) == []
+  test "get_flash/2 returns nil for missing key" do
+    conn = conn(:get, "/") |> with_session |> fetch_flash([])
+    assert get_flash(conn, :notice) == nil
+    assert get_flash(conn, "notice") == nil
   end
 
-  test "put/3 adds the key/message pair to the flash" do
-    conn = conn_with_session
-    |> Flash.put(:error, "oh noes!")
-    |> Flash.put(:notice, "false alarm!")
-
-    assert Flash.get(conn, :error) == "oh noes!"
-    assert Flash.get(conn, :notice) == "false alarm!"
+  test "put_flash/3 raises ArgumentError when flash not previously fetched" do
+    assert_raise ArgumentError, fn ->
+      conn(:get, "/") |> with_session |> put_flash(:error, "boom!")
+    end
   end
 
-  test "clear/1 clears the flash messages" do
-    conn = conn_with_session
-    |> Flash.put(:error, "oh noes!")
-    |> Flash.put(:notice, "false alarm!")
+  test "put_flash/3 adds the key/message pair to the flash" do
+    conn =
+      conn(:get, "/")
+      |> with_session
+      |> fetch_flash([])
+      |> put_flash(:error, "oh noes!")
+      |> put_flash(:notice, "false alarm!")
 
-    refute Flash.get(conn) == %{}
-    conn = Flash.clear(conn)
-    assert Flash.get(conn) == %{}
+    assert get_flash(conn, :error) == "oh noes!"
+    assert get_flash(conn, "error") == "oh noes!"
+    assert get_flash(conn, :notice) == "false alarm!"
+    assert get_flash(conn, "notice") == "false alarm!"
   end
 
-  test "pop_all/2 pops all messages from the flash" do
-    conn = conn_with_session
-    assert match?{[], _conn}, Flash.pop_all(conn, :notices)
+  test "clear_flash/1 clears the flash messages" do
+    conn =
+      conn(:get, "/")
+      |> with_session
+      |> fetch_flash([])
+      |> put_flash(:error, "oh noes!")
+      |> put_flash(:notice, "false alarm!")
 
-    conn = conn
-    |> Flash.put(:notices, "oh noes!")
-    |> Flash.put(:notices, "false alarm!")
+    refute get_flash(conn) == %{}
+    conn = clear_flash(conn)
+    assert get_flash(conn) == %{}
+  end
 
-    {messages, conn} = Flash.pop_all(conn, :notices)
-    assert messages == ["oh noes!", "false alarm!"]
-    assert Flash.get(conn) == %{}
+  test "fetch_flash/2 raises ArgumentError when session not previously fetched" do
+    assert_raise ArgumentError, fn ->
+      conn(:get, "/") |> fetch_flash([])
+    end
   end
 end

@@ -1,42 +1,72 @@
 defmodule Phoenix.Socket.Message do
-  alias Poison, as: JSON
-  alias Phoenix.Socket.Message
+  @moduledoc """
+  Defines a message dispatched over transport to channels and vice-versa.
 
-  defstruct channel: nil, topic: nil, event: nil, message: nil
+  The message format requires the following keys:
 
-  defmodule InvalidMessage do
-    defexception [:message]
-    def exception(msg) do
-      %InvalidMessage{message: "Invalid Socket Message: #{inspect msg}"}
-    end
-  end
+    * `:topic` - The string topic or topic:subtopic pair namespace, for
+      example "messages", "messages:123"
+    * `:event`- The string event name, for example "phx_join"
+    * `:payload` - The message payload
+    * `:ref` - The unique string ref
+    * `:join_ref` - The unique string ref when joining
+
+  """
+
+  @type t :: %Phoenix.Socket.Message{}
+  defstruct topic: nil, event: nil, payload: nil, ref: nil, join_ref: nil
 
   @doc """
-  Parse JSON into required format
-  Raises `Phoenix.Socket.Message.InvalidMessage` if invalid
+  Converts a map with string keys into a message struct.
 
-  The Message format requires the following keys:
-
-    * channel - The String Channel namespace, ie "messages"
-    * topic - The String Topic namespace, ie "123"
-    * event - The String event name, ie "join"
-    * message - The String JSON message payload
-
-  Returns The `%Phoenix.Socket.Message{}` parsed from JSON
+  Raises `Phoenix.Socket.InvalidMessageError` if not valid.
   """
-  def parse!(text) do
+  def from_map!(map) when is_map(map) do
     try do
-      json = JSON.decode!(text)
-
-      %Message{
-        channel: Dict.fetch!(json, "channel"),
-        topic:   Dict.fetch!(json, "topic"),
-        event:   Dict.fetch!(json, "event"),
-        message: Dict.fetch!(json, "message")
+      %Phoenix.Socket.Message{
+        topic: Map.fetch!(map, "topic"),
+        event: Map.fetch!(map, "event"),
+        payload: Map.fetch!(map, "payload"),
+        ref: Map.fetch!(map, "ref"),
+        join_ref: Map.get(map, "join_ref")
       }
     rescue
-      err in [KeyError]         -> raise InvalidMessage, message: "Missing key: '#{err.key}'"
-      err in [JSON.SyntaxError] -> raise InvalidMessage, message: "Invalid JSON: #{err.message}"
+      err in [KeyError] ->
+        raise Phoenix.Socket.InvalidMessageError, "missing key #{inspect(err.key)}"
     end
   end
+end
+
+defmodule Phoenix.Socket.Reply do
+  @moduledoc """
+  Defines a reply sent from channels to transports.
+
+  The message format requires the following keys:
+
+    * `:topic` - The string topic or topic:subtopic pair namespace, for example "messages", "messages:123"
+    * `:status` - The reply status as an atom
+    * `:payload` - The reply payload
+    * `:ref` - The unique string ref
+    * `:join_ref` - The unique string ref when joining
+
+  """
+
+  @type t :: %Phoenix.Socket.Reply{}
+  defstruct topic: nil, status: nil, payload: nil, ref: nil, join_ref: nil
+end
+
+defmodule Phoenix.Socket.Broadcast do
+  @moduledoc """
+  Defines a message sent from pubsub to channels and vice-versa.
+
+  The message format requires the following keys:
+
+    * `:topic` - The string topic or topic:subtopic pair namespace, for example "messages", "messages:123"
+    * `:event`- The string event name, for example "phx_join"
+    * `:payload` - The message payload
+
+  """
+
+  @type t :: %Phoenix.Socket.Broadcast{}
+  defstruct topic: nil, event: nil, payload: nil
 end

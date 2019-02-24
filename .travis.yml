@@ -1,14 +1,45 @@
-language: erlang
+language: elixir
+elixir:
+  - 1.4
+  - 1.5
+  - 1.6
+  - 1.7
+  - 1.8
 otp_release:
-  - 17.1
-before_install:
-  - wget http://s3.hex.pm/builds/elixir/v1.0.2.zip
-  - unzip -d elixir v1.0.2.zip
+  - 19.3
+  - 20.3
+  - 21.0
+matrix:
+  exclude:
+    - elixir: 1.5
+      otp_release: 21.0
+    - elixir: 1.4
+      otp_release: 21.0
+    - elixir: 1.7
+      otp_release: 19.3
+    - elixir: 1.7
+      otp_release: 20.3
+    - elixir: 1.8
+      otp_release: 19.3
+    - elixir: 1.8
+      otp_release: 20.3
+sudo: false
+env:
+  global:
+    - ELIXIR_ASSERT_TIMEOUT=2000
+  matrix:
+    - COWBOY_VERSION=1.0
+    - COWBOY_VERSION=2.0
 before_script:
-  - export PATH=`pwd`/elixir/bin:$PATH
-  - mix local.hex --force
-  - mix deps.get --only test
-script: mix test
+  - mix deps.get
+  - nvm install 6.2 && nvm use 6.2
+script:
+  - mix test
+  - cd installer && elixir -e "Version.match?(System.version, ~s(~> 1.5)) || System.halt(0)" -S mix test
+  - cd ../assets && npm install && npm test
 after_script:
-  - mix deps.get --only docs
+  - cd $TRAVIS_BUILD_DIR
   - MIX_ENV=docs mix inch.report
+cache:
+  directories:
+  - assets/node_modules

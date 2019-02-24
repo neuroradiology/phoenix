@@ -46,6 +46,7 @@ defmodule Phoenix.TemplateTest do
 
   test "format_encoder/1 returns the formatter for a given template" do
     assert Template.format_encoder("hello.html") == Phoenix.HTML.Engine
+    assert Template.format_encoder("hello.js") == Phoenix.HTML.Engine
     assert Template.format_encoder("hello.unknown") == nil
   end
 
@@ -53,50 +54,92 @@ defmodule Phoenix.TemplateTest do
 
   defmodule View do
     use Phoenix.Template, root: Path.join(__DIR__, "../fixtures/templates")
-    import Phoenix.HTML
 
-    def render("user.json", [name: name]) do
-      Poison.encode! %{id: 123, name: name}
+    def render(template, assigns) do
+      render_template(template, assigns)
     end
   end
 
-  test "render regular function definitions" do
-    assert IO.iodata_to_binary(View.render("user.json", name: "eric")) ==
-      "{\"name\":\"eric\",\"id\":123}"
+  test "render eex templates only trim html" do
+    assert {:safe, ["123", "456" | _]} = View.render("trim.html", %{})
+    assert "123\n456\n789\n" = View.render("no_trim.text", %{})
   end
 
   test "render eex templates sanitizes against xss by default" do
-    assert View.render("show.html") ==
-           {:safe, "<div>Show! </div>\n"}
+    assert View.render("show.html", %{message: ""}) ==
+           {:safe, ["<div>Show! ", [], "</div>\n"]}
 
-    assert View.render("show.html", message: "<script>alert('xss');</script>") ==
-           {:safe, "<div>Show! &lt;script&gt;alert(&#39;xss&#39;);&lt;/script&gt;</div>\n"}
+    assert View.render("show.html", %{message: "<script>alert('xss');</script>"}) ==
+           {:safe, ["<div>Show! ", [[[[[[[] | "&lt;"], "script" | "&gt;"], "alert(" | "&#39;"], "xss" | "&#39;"], ");" | "&lt;"], "/script" | "&gt;"], "</div>\n"]}
   end
 
   test "render eex templates allows raw data to be injected" do
-    html = View.render("safe.html", message: "<script>alert('xss');</script>")
-    assert html == {:safe, "Raw <script>alert('xss');</script>\n"}
+    assert View.render("safe.html", %{message: "<script>alert('xss');</script>"}) ==
+           {:safe, ["Raw ", "<script>alert('xss');</script>", "\n"]}
   end
 
   test "compiles templates from path" do
-    assert View.render("show.html", message: "hello!") ==
-           {:safe, "<div>Show! hello!</div>\n"}
+    assert View.render("show.html", %{message: "hello!"}) ==
+           {:safe, ["<div>Show! ", "hello!", "</div>\n"]}
   end
 
-  test "compiler adds catch-all render/2 that raises UndefinedError" do
+  test "adds catch-all render_template/2 that raises UndefinedError" do
     assert_raise Phoenix.Template.UndefinedError, ~r/Could not render "not-exists.html".*/, fn ->
-      View.render("not-exists.html")
+      View.render("not-exists.html", %{})
     end
   end
 
-  test "compiler ignores missing template path" do
+  test "ignores missing template path" do
     defmodule OtherViews do
       use Phoenix.Template, root: Path.join(__DIR__, "not-exists")
+
+      def render(template, assigns) do
+        render_template(template, assigns)
+      end
+
+      def template_not_found(template, _assigns) do
+        "Not found: #{template}"
+      end
+    end
+
+    assert OtherViews.render("foo", %{}) == "Not found: foo"
+  end
+
+  test "template_not_found detects and short circuits infinite call-stacks" do
+    defmodule InfiniteView do
+      use Phoenix.Template, root: Path.join(__DIR__, "not-exists")
+
+      def render(template, assigns) do
+        render_template(template, assigns)
+      end
+
+      def template_not_found(_template, assigns) do
+        render_template("this-does-not-exist.html", assigns)
+      end
+    end
+
+    assert_raise Phoenix.Template.UndefinedError, ~r/Could not render "this-does-not-exist.html".*/, fn ->
+      InfiniteView.render("this-does-not-exist.html", %{})
     end
   end
 
   test "generates __phoenix_recompile__? function" do
     refute View.__phoenix_recompile__?
   end
-end
 
+  defmodule CustomEngineView do
+    use Phoenix.Template,
+      root: Path.join(__DIR__, "../fixtures/templates"),
+      template_engines: %{
+        foo: Phoenix.Template.EExEngine
+      }
+
+    def render(template, assigns) do
+      render_template(template, assigns)
+    end
+  end
+
+  test "custom view renders custom templates" do
+    assert CustomEngineView.render("custom", %{}) == "from foo"
+  end
+end

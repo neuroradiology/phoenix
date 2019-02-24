@@ -1,66 +1,58 @@
 defmodule Phoenix.Router.ResourcesTest do
   use ExUnit.Case, async: true
-  use ConnHelper
-
-  setup do
-    Logger.disable(self())
-    :ok
-  end
+  use RouterHelper
 
   defmodule UserController do
     use Phoenix.Controller
-    plug :action
     def show(conn, _params), do: text(conn, "show users")
     def index(conn, _params), do: text(conn, "index users")
     def new(conn, _params), do: text(conn, "new users")
     def edit(conn, _params), do: text(conn, "edit users")
     def create(conn, _params), do: text(conn, "create users")
     def update(conn, _params), do: text(conn, "update users")
-    def destroy(conn, _params), do: text(conn, "destroy users")
+    def delete(conn, _params), do: text(conn, "delete users")
   end
 
-  defmodule FileController do
+  defmodule Api.FileController do
     use Phoenix.Controller
-    plug :action
     def show(conn, _params), do: text(conn, "show files")
     def index(conn, _params), do: text(conn, "index files")
     def new(conn, _params), do: text(conn, "new files")
   end
 
-  defmodule CommentController do
+  defmodule Api.CommentController do
     use Phoenix.Controller
-    plug :action
     def show(conn, _params), do: text(conn, "show comments")
     def index(conn, _params), do: text(conn, "index comments")
     def new(conn, _params), do: text(conn, "new comments")
     def create(conn, _params), do: text(conn, "create comments")
     def update(conn, _params), do: text(conn, "update comments")
-    def destroy(conn, _params), do: text(conn, "destroy comments")
+    def delete(conn, _params), do: text(conn, "delete comments")
     def special(conn, _params), do: text(conn, "special comments")
   end
 
   defmodule Router do
     use Phoenix.Router
 
-    resources "/users", UserController do
+    resources "/users", UserController, alias: Api do
       resources "/comments", CommentController do
         get "/special", CommentController, :special
       end
-      resources "/files", FileController, except: [:destroy]
+      resources "/files", FileController, except: [:delete]
     end
 
-    resources "/files", FileController, only: [:index]
+    resources "/members", UserController, only: [:show, :new, :delete]
 
-    resources "/admin", UserController, param: "slug", name: "admin", only: [:show] do
-      resources "/comments", CommentController, param: "key", name: "post", except: [:destroy]
-      resources "files", FileController, only: [:show, :index, :new]
+    resources "/files", Api.FileController, only: [:index]
+
+    resources "/admin", UserController, param: "slug", name: "admin", only: [:show], alias: Api do
+      resources "/comments", CommentController, param: "key", name: "post", except: [:delete]
+      resources "/files", FileController, only: [:show, :index, :new]
     end
   end
 
-  setup_all do
-    Application.put_env(:phoenix, Router, http: false, https: false)
-    Router.start()
-    on_exit &Router.stop/0
+  setup do
+    Logger.disable(self())
     :ok
   end
 
@@ -110,10 +102,10 @@ defmodule Phoenix.Router.ResourcesTest do
     end
   end
 
-  test "toplevel route matches destroy action" do
+  test "toplevel route matches delete action" do
     conn = call(Router, :delete, "users/2")
     assert conn.status == 200
-    assert conn.resp_body == "destroy users"
+    assert conn.resp_body == "delete users"
     assert conn.params["id"] == "2"
   end
 
@@ -147,10 +139,10 @@ defmodule Phoenix.Router.ResourcesTest do
     assert conn.params["id"] == "123"
   end
 
-  test "1-Level nested route matches with named param prefix on destroy" do
+  test "1-Level nested route matches with named param prefix on delete" do
     conn = call(Router, :delete, "users/1/comments/123")
     assert conn.status == 200
-    assert conn.resp_body == "destroy comments"
+    assert conn.resp_body == "delete comments"
     assert conn.params["user_id"] == "1"
     assert conn.params["id"] == "123"
   end
@@ -176,19 +168,27 @@ defmodule Phoenix.Router.ResourcesTest do
   end
 
   test "nested options limit resource by passing :except option" do
-    conn = call(Router, :delete, "users/1/files/2")
-    assert conn.status == 404
+    assert_raise Phoenix.Router.NoRouteError, fn ->
+      call(Router, :delete, "users/1/files/2")
+    end
+
     conn = call(Router, :get, "users/1/files/new")
     assert conn.status == 200
   end
 
   test "nested options limit resource by passing :only option" do
-    conn = call(Router, :patch, "admin/1/files/2")
-    assert conn.status == 404
-    conn = call(Router, :post, "admin/1/files")
-    assert conn.status == 404
-    conn = call(Router, :delete, "admin/1/files/1")
-    assert conn.status == 404
+    assert_raise Phoenix.Router.NoRouteError, fn ->
+      call(Router, :patch, "admin/1/files/2")
+    end
+
+    assert_raise Phoenix.Router.NoRouteError, fn ->
+      call(Router, :post, "admin/1/files")
+    end
+
+    assert_raise Phoenix.Router.NoRouteError, fn ->
+      call(Router, :delete, "admin/1/files/1")
+    end
+
     conn = call(Router, :get, "admin/1/files/")
     assert conn.status == 200
     conn = call(Router, :get, "admin/1/files/1")
@@ -202,14 +202,21 @@ defmodule Phoenix.Router.ResourcesTest do
     assert conn.status == 200
     assert conn.resp_body == "show users"
 
-    conn = call(Router, :get, "admin/")
-    assert conn.status == 404
-    conn = call(Router, :patch, "admin/1")
-    assert conn.status == 404
-    conn = call(Router, :post, "admin")
-    assert conn.status == 404
-    conn = call(Router, :delete, "admin/1")
-    assert conn.status == 404
+    assert_raise Phoenix.Router.NoRouteError, fn ->
+      call(Router, :get, "admin/")
+    end
+
+    assert_raise Phoenix.Router.NoRouteError, fn ->
+      call(Router, :patch, "admin/1")
+    end
+
+    assert_raise Phoenix.Router.NoRouteError, fn ->
+      call(Router, :post, "admin")
+    end
+
+    assert_raise Phoenix.Router.NoRouteError, fn ->
+      call(Router, :delete, "admin/1")
+    end
 
     conn = call(Router, :get, "admin/1/comments")
     assert conn.status == 200
@@ -227,16 +234,17 @@ defmodule Phoenix.Router.ResourcesTest do
     assert conn.status == 200
     assert conn.resp_body == "create comments"
 
-    conn = call(Router, :delete, "scoped_files/1")
-    assert conn.status == 404
+    assert_raise Phoenix.Router.NoRouteError, fn ->
+      call(Router, :delete, "scoped_files/1")
+    end
   end
 
-  test "param option allows default singularlized _id param to be overidden" do
+  test "param option allows default singularlized _id param to be overridden" do
     conn = call(Router, :get, "admin/foo")
     assert conn.status == 200
     assert conn.params["slug"] == "foo"
     assert conn.resp_body == "show users"
-    assert Router.Helpers.admin_path(:show, "foo") ==
+    assert Router.Helpers.admin_path(conn, :show, "foo") ==
            "/admin/foo"
 
     conn = call(Router, :get, "admin/bar/comments/the_key")
@@ -244,7 +252,45 @@ defmodule Phoenix.Router.ResourcesTest do
     assert conn.params["admin_slug"] == "bar"
     assert conn.params["key"] == "the_key"
     assert conn.resp_body == "show comments"
-    assert Router.Helpers.admin_post_path(:show, "bar", "the_key") ==
+    assert Router.Helpers.admin_post_path(conn, :show, "bar", "the_key") ==
            "/admin/bar/comments/the_key"
+  end
+
+  test "resources with :only sets proper match order for :show and :new" do
+    conn = call(Router, :get, "members/new")
+    assert conn.status == 200
+    assert conn.resp_body == "new users"
+
+    conn = call(Router, :get, "members/2")
+    assert conn.status == 200
+    assert conn.resp_body == "show users"
+    assert conn.params["id"] == "2"
+  end
+
+  test "singleton resources declaring an :index route throws an ArgumentError" do
+    assert_raise ArgumentError, ~r/supported singleton actions: \[:edit, :new, :show, :create, :update, :delete\]/, fn ->
+      defmodule SingletonRouter.Router do
+        use Phoenix.Router
+        resources "/", UserController, singleton: true, only: [:index]
+      end
+    end
+  end
+
+  test "resources validates :only actions" do
+    assert_raise ArgumentError, ~r/supported actions: \[:index, :edit, :new, :show, :create, :update, :delete\]/, fn ->
+      defmodule SingletonRouter.Router do
+        use Phoenix.Router
+        resources "/", UserController, only: [:bad_index]
+      end
+    end
+  end
+
+  test "resources validates :except actions" do
+    assert_raise ArgumentError, ~r/supported actions: \[:index, :edit, :new, :show, :create, :update, :delete\]/, fn ->
+      defmodule SingletonRouter.Router do
+        use Phoenix.Router
+        resources "/", UserController, except: [:bad_index]
+      end
+    end
   end
 end

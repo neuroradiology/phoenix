@@ -1,12 +1,47 @@
 defmodule Phoenix.CodeReloaderTest do
   use ExUnit.Case, async: true
-  use ConnHelper
+  use RouterHelper
 
-  test "touch/0 touches and returns touched files" do
-    assert Phoenix.CodeReloader.touch == []
+  defmodule Endpoint do
+    def config(:reloadable_compilers) do
+      [:gettext, :phoenix, :elixir]
+    end
+
+    def config(:reloadable_apps) do
+      nil
+    end
   end
 
-  test "reload!/0 sends recompilation through GenServer" do
-    assert Phoenix.CodeReloader.reload! == :noop
+  def reload!(_) do
+    {:error, "oops"}
+  end
+
+  test "compile.phoenix tasks touches files" do
+    assert Mix.Tasks.Compile.Phoenix.run([]) == :noop
+  end
+
+  test "reloads on every request" do
+    pid = Process.whereis(Phoenix.CodeReloader.Server)
+    :erlang.trace(pid, true, [:receive])
+
+    opts = Phoenix.CodeReloader.init([])
+    conn = conn(:get, "/")
+           |> Plug.Conn.put_private(:phoenix_endpoint, Endpoint)
+           |> Phoenix.CodeReloader.call(opts)
+    assert conn.state == :unset
+
+    assert_receive {:trace, ^pid, :receive, {_, _, {:reload!, Endpoint}}}
+  end
+
+  test "renders compilation error on failure" do
+    opts = Phoenix.CodeReloader.init(reloader: &__MODULE__.reload!/1)
+    conn = conn(:get, "/")
+           |> Plug.Conn.put_private(:phoenix_endpoint, Endpoint)
+           |> Phoenix.CodeReloader.call(opts)
+    assert conn.state  == :sent
+    assert conn.status == 500
+    assert conn.resp_body =~ "oops"
+    assert conn.resp_body =~ "CompileError"
+    assert conn.resp_body =~ "Compilation error"
   end
 end

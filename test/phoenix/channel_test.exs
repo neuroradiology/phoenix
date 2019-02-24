@@ -1,326 +1,192 @@
 defmodule Phoenix.Channel.ChannelTest do
-  use ExUnit.Case
-  alias Phoenix.Topic
-  alias Phoenix.Channel
-  alias Phoenix.Socket
-  alias Phoenix.Socket.Message
-  alias Phoenix.Socket.Handler
-  alias Phoenix.Socket.Handler.InvalidReturn
+  use ExUnit.Case, async: true
 
-  def new_socket do
-    %Socket{pid: self,
-            router: nil,
-            channel: "somechan",
-            channels: [],
-            assigns: []}
+  @pubsub __MODULE__.PubSub
+  import Phoenix.Channel
+
+  setup_all do
+    {:ok, _} = Phoenix.PubSub.PG2.start_link(@pubsub, pool_size: 1)
+    :ok
   end
 
-  test "#subscribe/unsubscribe's socket to/from topic" do
-    socket = Socket.set_current_channel(new_socket, "chan", "topic")
+  test "broadcasts from self" do
+    Phoenix.PubSub.subscribe(@pubsub, "sometopic")
 
-    assert Channel.subscribe(socket, "chan", "topic")
-    assert Topic.subscribers("chan:topic") == [socket.pid]
-    assert Channel.unsubscribe(socket, "chan", "topic")
-    assert Topic.subscribers("chan:topic") == []
-  end
+    socket = %Phoenix.Socket{
+      pubsub_server: @pubsub,
+      topic: "sometopic",
+      channel_pid: self(),
+      joined: true
+    }
 
-  test "#broadcast broadcasts global message on channel" do
-    Topic.create("chan:topic")
-    socket = Socket.set_current_channel(new_socket, "chan", "topic")
+    broadcast_from(socket, "event1", %{key: :val})
 
-    assert Channel.broadcast(socket, "event", %{foo: "bar"})
-  end
+    refute_received %Phoenix.Socket.Broadcast{
+      event: "event1",
+      payload: %{key: :val},
+      topic: "sometopic"
+    }
 
-  test "#broadcast raises friendly error when message arg isn't a Map" do
-    message = "Message argument must be a map"
-    assert_raise RuntimeError, message, fn ->
-      Channel.broadcast("channel", "topic", "event", bar: "foo", foo: "bar")
-    end
-  end
+    broadcast_from!(socket, "event2", %{key: :val})
 
-  test "#broadcast_from broadcasts message on channel, skipping publisher" do
-    Topic.create("chan:topic")
-    socket = new_socket
-    |> Socket.set_current_channel("chan", "topic")
-    |> Channel.subscribe("chan", "topic")
+    refute_received %Phoenix.Socket.Broadcast{
+      event: "event2",
+      payload: %{key: :val},
+      topic: "sometopic"
+    }
 
-    assert Channel.broadcast_from(socket, "event", %{message: "hello"})
-    refute Enum.any?(Process.info(self)[:messages], &match?(%Message{}, &1))
-  end
+    broadcast(socket, "event3", %{key: :val})
 
-  test "#broadcast_from raises friendly error when message arg isn't a Map" do
-    socket = Socket.set_current_channel(new_socket, "chan", "topic")
-    message = "Message argument must be a map"
-    assert_raise RuntimeError, message, fn ->
-      Channel.broadcast_from(socket, "event", bar: "foo", foo: "bar")
-    end
-  end
+    assert_receive %Phoenix.Socket.Broadcast{
+      event: "event3",
+      payload: %{key: :val},
+      topic: "sometopic"
+    }
 
-  test "#broadcast_from/5 raises friendly error when message arg isn't a Map" do
-    message = "Message argument must be a map"
-    assert_raise RuntimeError, message, fn ->
-      Channel.broadcast_from(self, "channel", "topic", "event", bar: "foo")
-    end
-  end
+    broadcast!(socket, "event4", %{key: :val})
 
-  test "#reply sends response to socket" do
-    socket = Socket.set_current_channel(new_socket, "chan", "topic")
-    assert Channel.reply(socket, "event", %{message: "hello"})
-
-    assert Enum.any?(Process.info(self)[:messages], &match?(%Message{}, &1))
-    assert_received %Message{
-      channel: "chan",
-      event: "event",
-      message: %{message: "hello"}, topic: "topic"
+    assert_receive %Phoenix.Socket.Broadcast{
+      event: "event4",
+      payload: %{key: :val},
+      topic: "sometopic"
     }
   end
 
-  test "#reply raises friendly error when message arg isn't a Map" do
-    socket = Socket.set_current_channel(new_socket, "chan", "topic")
-    message = "Message argument must be a map"
-    assert_raise RuntimeError, message, fn ->
-      Channel.reply(socket, "event", foo: "bar", bar: "foo")
+  test "broadcasts from other" do
+    Phoenix.PubSub.subscribe(@pubsub, "sometopic")
+
+    socket = %Phoenix.Socket{
+      pubsub_server: @pubsub,
+      topic: "sometopic",
+      channel_pid: spawn_link(fn -> :ok end),
+      joined: true
+    }
+
+    broadcast_from(socket, "event1", %{key: :val})
+
+    assert_receive %Phoenix.Socket.Broadcast{
+      event: "event1",
+      payload: %{key: :val},
+      topic: "sometopic"
+    }
+
+    broadcast_from!(socket, "event2", %{key: :val})
+
+    assert_receive %Phoenix.Socket.Broadcast{
+      event: "event2",
+      payload: %{key: :val},
+      topic: "sometopic"
+    }
+
+    broadcast(socket, "event3", %{key: :val})
+
+    assert_receive %Phoenix.Socket.Broadcast{
+      event: "event3",
+      payload: %{key: :val},
+      topic: "sometopic"
+    }
+
+    broadcast!(socket, "event4", %{key: :val})
+
+    assert_receive %Phoenix.Socket.Broadcast{
+      event: "event4",
+      payload: %{key: :val},
+      topic: "sometopic"
+    }
+  end
+
+  test "broadcasts when not joined" do
+    socket = %Phoenix.Socket{joined: false}
+
+    assert_raise RuntimeError, ~r"join", fn ->
+      broadcast_from(socket, "event", %{key: :val})
+    end
+
+    assert_raise RuntimeError, ~r"join", fn ->
+      broadcast_from!(socket, "event", %{key: :val})
+    end
+
+    assert_raise RuntimeError, ~r"join", fn ->
+      broadcast(socket, "event", %{key: :val})
+    end
+
+    assert_raise RuntimeError, ~r"join", fn ->
+      broadcast!(socket, "event", %{key: :val})
     end
   end
 
-  test "Default #leave is generated as a noop" do
-    defmodule Chan1 do
-      use Phoenix.Channel
-      def join(socket, _topic, _msg), do: {:ok, socket}
-    end
-    socket = new_socket
-    assert Chan1.leave(socket, []) == socket
+  test "pushing to transport" do
+    socket = %Phoenix.Socket{
+      serializer: Phoenix.ChannelTest.NoopSerializer,
+      topic: "sometopic",
+      transport_pid: self(),
+      joined: true
+    }
+
+    push(socket, "event1", %{key: :val})
+
+    assert_receive %Phoenix.Socket.Message{
+      event: "event1",
+      payload: %{key: :val},
+      topic: "sometopic"
+    }
   end
 
-  test "#leave can be overridden" do
-    defmodule Chan2 do
-      use Phoenix.Channel
-      def join(socket, _topic, _msg), do: {:ok, socket}
-      def leave(_socket, _msg), do: :overridden
-    end
+  test "pushing when not joined" do
+    socket = %Phoenix.Socket{joined: false}
 
-    assert Chan2.leave(new_socket, []) == :overridden
-  end
-
-  test "successful join authorizes and subscribes socket to channel/topic" do
-    defmodule Chan3 do
-      use Phoenix.Channel
-      def join(socket, _topic, _msg), do: {:ok, socket}
-    end
-    defmodule Router3 do
-      use Phoenix.Router
-      use Phoenix.Router.Socket, mount: "/ws"
-      channel "chan3", Chan3
-    end
-
-    socket = %Socket{pid: self, router: Router3, channel: "chan3"}
-    message  = """
-    {"channel": "chan3","topic":"topic","event":"join","message":"{}"}
-    """
-    Topic.create("chan3:topic")
-    assert Topic.subscribers("chan3:topic") == []
-    refute Socket.authenticated?(socket, "chan3", "topic")
-    {:ok, _req, socket} = Handler.websocket_handle({:text, message}, nil, socket)
-    assert Socket.authenticated?(socket, "chan3", "topic")
-    assert Topic.subscribers("chan3:topic") == [socket.pid]
-  end
-
-  test "unsuccessful join denies socket access to channel/topic" do
-    defmodule Chan4 do
-      use Phoenix.Channel
-      def join(socket, _topic, _msg), do: {:error, socket, :unauthenticated}
-    end
-    defmodule Router4 do
-      use Phoenix.Router
-      use Phoenix.Router.Socket, mount: "/ws"
-      channel "chan4", Chan4
-    end
-
-    socket = %Socket{pid: self, router: Router4, channel: "chan4"}
-    message  = """
-    {"channel": "chan4","topic":"topic","event":"join","message":"{}"}
-    """
-    Topic.create("chan4:topic")
-    assert Topic.subscribers("chan4:topic") == []
-    refute Socket.authenticated?(socket, "chan4", "topic")
-    {:ok, _req, socket} = Handler.websocket_handle({:text, message}, nil, socket)
-    refute Socket.authenticated?(socket, "chan4", "topic")
-    refute Topic.subscribers("chan4:topic") == [socket.pid]
-  end
-
-  test "#leave is called when the socket conn closes, and is unsubscribed" do
-    defmodule Chan5 do
-      use Phoenix.Channel
-      def join(socket, _topic, _msg), do: {:ok, socket}
-      def leave(socket, _msg) do
-        send(socket.pid, :left)
-        socket
-      end
-    end
-    defmodule Router5 do
-      use Phoenix.Router
-      use Phoenix.Router.Socket, mount: "/ws"
-      channel "chan5", Chan5
-    end
-
-    socket = %Socket{pid: self, router: Router5, channel: "chan5"}
-
-    message  = """
-    {"channel": "chan5","topic":"topic","event":"join","message":"{}"}
-    """
-    Topic.create("chan5:topic")
-    {:ok, _req, socket} = Handler.websocket_handle({:text, message}, nil, socket)
-    Handler.websocket_terminate(:reason, socket.conn, socket)
-    assert_received :left
-    assert Topic.subscribers("chan5:topic") == []
-  end
-
-  test "#info is called when receiving regular process messages" do
-    defmodule Chan6 do
-      use Phoenix.Channel
-      def join(socket, _topic, _msg), do: {:ok, socket}
-      def event(socket, "info", _msg) do
-        send(socket.pid, :info)
-        socket
-      end
-    end
-    defmodule Router6 do
-      use Phoenix.Router
-      use Phoenix.Router.Socket, mount: "/ws"
-      channel "chan6", Chan6
-    end
-
-    socket = %Socket{pid: self, router: Router6, channel: "chan6"}
-
-    message  = """
-    {"channel": "chan6","topic":"topic","event":"join","message":"{}"}
-    """
-    Topic.create("chan6:topic")
-    {:ok, _req, socket} = Handler.websocket_handle({:text, message}, nil, socket)
-    Handler.websocket_info(:stuff, socket.conn, socket)
-    assert_received :info
-  end
-
-  test "#join raise InvalidReturn exception when return type invalid" do
-    defmodule Chan7 do
-      use Phoenix.Channel
-      def join(_socket, _topic, _msg), do: :some_bad_return
-    end
-    defmodule Router7 do
-      use Phoenix.Router
-      use Phoenix.Router.Socket, mount: "/ws"
-      channel "chan7", Chan7
-    end
-
-    socket = %Socket{pid: self, router: Router7, channel: "chan7"}
-    message  = """
-    {"channel": "chan7","topic":"topic","event":"join","message":"{}"}
-    """
-    assert_raise InvalidReturn, fn ->
-      Handler.websocket_handle({:text, message}, nil, socket)
+    assert_raise RuntimeError, ~r"join", fn ->
+      push(socket, "event", %{key: :val})
     end
   end
 
-  test "#leave raise InvalidReturn exception when return type invalid" do
-    defmodule Chan8 do
-      use Phoenix.Channel
-      def join(socket, _topic, _msg), do: {:ok, socket}
-      def leave(_socket, _msg), do: :some_bad_return
-    end
-    defmodule Router8 do
-      use Phoenix.Router
-      use Phoenix.Router.Socket, mount: "/ws"
-      channel "chan8", Chan8
-    end
-    socket = %Socket{pid: self, router: Router8, channel: "chan8"}
-    message  = """
-    {"channel": "chan8","topic":"topic","event":"join","message":"{}"}
-    """
-    Topic.create("chan6:topic")
-    {:ok, _req, socket} = Handler.websocket_handle({:text, message}, nil, socket)
+  test "replying to transport" do
+    socket = %Phoenix.Socket{
+      serializer: Phoenix.ChannelTest.NoopSerializer,
+      ref: "123",
+      topic: "sometopic",
+      transport_pid: self(),
+      joined: true
+    }
 
-    assert_raise InvalidReturn, fn ->
-      Handler.websocket_terminate(:reason, socket.conn, socket)
-    end
+    ref = socket_ref(socket)
+    reply(ref, {:ok, %{key: :val}})
+
+    assert_receive %Phoenix.Socket.Reply{
+      payload: %{key: :val},
+      ref: "123",
+      status: :ok,
+      topic: "sometopic"
+    }
   end
 
-  test "#event raises InvalidReturn exception when return type is invalid" do
-    defmodule Chan9 do
-      use Phoenix.Channel
-      def join(socket, _topic, _msg), do: {:ok, socket}
-      def event(_socket, "boom", _msg), do: :some_bad_return
-    end
-    defmodule Router9 do
-      use Phoenix.Router
-      use Phoenix.Router.Socket, mount: "/ws"
-      channel "chan9", Chan9
-    end
-    socket = %Socket{pid: self, router: Router9, channel: "chan9"}
-    message  = """
-    {"channel": "chan9","topic":"topic","event":"join","message":"{}"}
-    """
-    Topic.create("chan9:topic")
-    refute Socket.authenticated?(socket, "chan9", "topic")
-    {:ok, _req, socket} = Handler.websocket_handle({:text, message}, nil, socket)
-    assert Socket.authenticated?(socket, "chan9", "topic")
-    message  = """
-    {"channel": "chan9","topic":"topic","event":"boom","message":"{}"}
-    """
-    assert_raise InvalidReturn, fn ->
-      Handler.websocket_handle({:text, message}, nil, socket)
-    end
+  test "replying just status to transport" do
+    socket = %Phoenix.Socket{
+      serializer: Phoenix.ChannelTest.NoopSerializer,
+      ref: "123",
+      topic: "sometopic",
+      transport_pid: self(),
+      joined: true
+    }
+
+    ref = socket_ref(socket)
+    reply(ref, :ok)
+
+    assert_receive %Phoenix.Socket.Reply{
+      payload: %{},
+      ref: "123",
+      status: :ok,
+      topic: "sometopic"
+    }
   end
 
-  test "phoenix channel returns heartbeat message when received" do
-    socket = %Socket{pid: self, router: Router9, channel: "phoenix"}
-    msg  = """
-    {"channel": "phoenix","topic":"conn","event":"heartbeat","message":"{}"}
-    """
-    {:reply, {:text, json}, _req, _} = Handler.websocket_handle({:text, msg}, nil, socket)
-
-    assert match?(%Message{channel: "phoenix", topic: "conn", event: "heartbeat", message: %{}},
-                  Message.parse!(json))
-  end
-
-  defmodule Chan10 do
-    use Phoenix.Channel
-    def join(socket, _topic, _msg), do: {:ok, socket}
-    def event(socket, "info", _msg) do
-      assign(socket, :foo, :bar)
+  test "socket_ref raises ArgumentError when socket is not joined or has no ref" do
+    assert_raise ArgumentError, ~r"join", fn ->
+      socket_ref(%Phoenix.Socket{joined: false})
     end
-    def event(socket, "put", dict) do
-      Enum.reduce dict, socket, fn {k, v}, socket -> assign(socket, k, v) end
+
+    assert_raise ArgumentError, ~r"ref", fn ->
+      socket_ref(%Phoenix.Socket{joined: true})
     end
-    def event(socket, "get", %{"key" => key}) do
-      send socket.pid, get_assign(socket, key)
-      socket
-    end
-  end
-  defmodule Router10 do
-    use Phoenix.Router
-    use Phoenix.Router.Socket, mount: "/ws"
-    channel "chan10", Chan10
-  end
-
-  test "socket state can change when receiving regular process messages" do
-
-    socket = %Socket{pid: self, router: Router10, channel: "chan66"}
-
-    message  = """
-    {"channel": "chan10","topic":"topic","event":"join","message":"{}"}
-    """
-    Topic.create("chan10:topic")
-    {:ok, _req, socket} = Handler.websocket_handle({:text, message}, nil, socket)
-    {:ok, _req, socket} = Handler.websocket_info(:stuff, socket.conn, socket)
-
-    assert Socket.get_assign(socket, socket.channel, "topic", :foo) == :bar
-  end
-
-  test "Socket state can be put and retrieved" do
-    socket = %Socket{pid: self, router: Router10, channel: "chan66"}
-    socket = Chan10.event(socket, "put", %{val: 123})
-    _socket = Chan10.event(socket, "get", %{"key" => :val})
-    assert_received 123
   end
 end
-
