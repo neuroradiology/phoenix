@@ -1,6 +1,15 @@
 defmodule <%= endpoint_module %> do
   use Phoenix.Endpoint, otp_app: :<%= web_app_name %>
 
+  # The session will be stored in the cookie and signed,
+  # this means its contents can be read but not tampered with.
+  # Set :encryption_salt if you would also like to encrypt it.
+  @session_options [
+    store: :cookie,
+    key: "_<%= web_app_name %>_key",
+    signing_salt: "<%= signing_salt %>"
+  ]
+
   socket "/socket", <%= web_namespace %>.UserSocket,
     websocket: true,
     longpoll: false
@@ -20,11 +29,12 @@ defmodule <%= endpoint_module %> do
   if code_reloading? do<%= if html do %>
     socket "/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket
     plug Phoenix.LiveReloader<% end %>
-    plug Phoenix.CodeReloader
+    plug Phoenix.CodeReloader<%= if ecto do %>
+    plug Phoenix.Ecto.CheckRepoStatus, otp_app: :<%= web_app_name %><% end %>
   end
 
   plug Plug.RequestId
-  plug Plug.Logger
+  plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
   plug Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],
@@ -33,14 +43,6 @@ defmodule <%= endpoint_module %> do
 
   plug Plug.MethodOverride
   plug Plug.Head
-
-  # The session will be stored in the cookie and signed,
-  # this means its contents can be read but not tampered with.
-  # Set :encryption_salt if you would also like to encrypt it.
-  plug Plug.Session,
-    store: :cookie,
-    key: "_<%= web_app_name %>_key",
-    signing_salt: "<%= signing_salt %>"
-
+  plug Plug.Session, @session_options
   plug <%= web_namespace %>.Router
 end

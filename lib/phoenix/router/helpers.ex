@@ -14,9 +14,9 @@ defmodule Phoenix.Router.Helpers do
   @doc """
   Callback invoked by the url generated in each helper module.
   """
-  def url(router, %Conn{private: private}) do
+  def url(_router, %Conn{private: private}) do
     case private do
-      %{phoenix_router_url: %URI{} = uri} -> url(router, uri)
+      %{phoenix_router_url: %URI{} = uri} -> URI.to_string(uri)
       %{phoenix_router_url: url} when is_binary(url) -> url
       %{phoenix_endpoint: endpoint} -> endpoint.url()
     end
@@ -27,7 +27,7 @@ defmodule Phoenix.Router.Helpers do
   end
 
   def url(_router, %URI{} = uri) do
-    URI.to_string(%URI{uri | path: nil})
+    URI.to_string(%{uri | path: nil})
   end
 
   def url(_router, endpoint) when is_atom(endpoint) do
@@ -108,37 +108,40 @@ defmodule Phoenix.Router.Helpers do
         (not is_nil(route.helper) and not (route.kind == :forward))
       end)
 
-    impls = for {route, exprs} <- routes, do: defhelper(route, exprs)
     groups = Enum.group_by(routes, fn {route, _exprs} -> route.helper end)
+    impls = for {_helper, group} <- groups,
+	                {route, exprs} <- Enum.sort_by(group, fn {_, exprs} -> length(exprs.binding) end),
+	                do: defhelper(route, exprs)
     catch_all = Enum.map(groups, &defhelper_catch_all/1)
 
     defhelper = quote @anno do
       defhelper = fn helper, vars, opts, bins, segs ->
-        def unquote(:"#{helper}_path")(conn_or_endpoint, unquote(opts), unquote_splicing(vars)) do
-          unquote(:"#{helper}_path")(conn_or_endpoint, unquote(opts), unquote_splicing(vars), [])
+        def unquote(:"#{helper}_path")(conn_or_endpoint, unquote(Macro.escape(opts)), unquote_splicing(vars)) do
+          unquote(:"#{helper}_path")(conn_or_endpoint, unquote(Macro.escape(opts)), unquote_splicing(vars), [])
         end
 
-        def unquote(:"#{helper}_path")(conn_or_endpoint, unquote(opts), unquote_splicing(vars), params)
+        def unquote(:"#{helper}_path")(conn_or_endpoint, unquote(Macro.escape(opts)), unquote_splicing(vars), params)
             when is_list(params) or is_map(params) do
           path(conn_or_endpoint, segments(unquote(segs), params, unquote(bins),
-                {unquote(helper), unquote(opts), unquote(Enum.map(vars, &Macro.to_string/1))}))
+                {unquote(helper), unquote(Macro.escape(opts)), unquote(Enum.map(vars, &Macro.to_string/1))}))
         end
 
-        def unquote(:"#{helper}_url")(conn_or_endpoint, unquote(opts), unquote_splicing(vars)) do
-          unquote(:"#{helper}_url")(conn_or_endpoint, unquote(opts), unquote_splicing(vars), [])
+        def unquote(:"#{helper}_url")(conn_or_endpoint, unquote(Macro.escape(opts)), unquote_splicing(vars)) do
+          unquote(:"#{helper}_url")(conn_or_endpoint, unquote(Macro.escape(opts)), unquote_splicing(vars), [])
         end
 
-        def unquote(:"#{helper}_url")(conn_or_endpoint, unquote(opts), unquote_splicing(vars), params)
+        def unquote(:"#{helper}_url")(conn_or_endpoint, unquote(Macro.escape(opts)), unquote_splicing(vars), params)
             when is_list(params) or is_map(params) do
-          url(conn_or_endpoint) <> unquote(:"#{helper}_path")(conn_or_endpoint, unquote(opts), unquote_splicing(vars), params)
+          url(conn_or_endpoint) <> unquote(:"#{helper}_path")(conn_or_endpoint, unquote(Macro.escape(opts)), unquote_splicing(vars), params)
         end
       end
     end
 
     defcatch_all = quote @anno do
-      defcatch_all = fn helper, bindings, routes ->
-        for binding <- bindings do
-          arity = length(binding) + 2
+      defcatch_all = fn helper, lengths, routes ->
+	      for length <- lengths do
+	        binding = List.duplicate({:_, [], nil}, length)
+	        arity = length + 2
 
           def unquote(:"#{helper}_path")(conn_or_endpoint, action, unquote_splicing(binding)) do
             path(conn_or_endpoint, "/")
@@ -163,7 +166,7 @@ defmodule Phoenix.Router.Helpers do
 
         defp raise_route_error(unquote(helper), suffix, arity, action, params) do
           Phoenix.Router.Helpers.raise_route_error(__MODULE__, "#{unquote(helper)}_#{suffix}",
-                                                   arity, action, unquote(routes), params)
+                                                   arity, action, unquote(Macro.escape(routes)), params)
         end
       end
     end
@@ -187,17 +190,17 @@ defmodule Phoenix.Router.Helpers do
       unquote_splicing(catch_all)
 
       @doc """
-      Generates the connection/endpoint base URL without any path information.
-      """
-      def url(data) do
-        Phoenix.Router.Helpers.url(unquote(env.module), data)
-      end
-
-      @doc """
       Generates the path information including any necessary prefix.
       """
       def path(data, path) do
         Phoenix.Router.Helpers.path(unquote(env.module), data, path)
+      end
+
+      @doc """
+      Generates the connection/endpoint base URL without any path information.
+      """
+      def url(data) do
+        Phoenix.Router.Helpers.url(unquote(env.module), data)
       end
 
       @doc """
@@ -218,8 +221,12 @@ defmodule Phoenix.Router.Helpers do
       @doc """
       Generates url to a static asset given its file path.
       """
-      def static_url(%Conn{private: private} = conn, path) do
-        static_url(private.phoenix_endpoint, path)
+      def static_url(%Conn{private: private}, path) do
+        case private do
+          %{phoenix_static_url: %URI{} = uri} -> URI.to_string(uri) <> path
+          %{phoenix_static_url: url} when is_binary(url) -> url <> path
+          %{phoenix_endpoint: endpoint} -> static_url(endpoint, path)
+        end
       end
 
       def static_url(%_{endpoint: endpoint} = conn, path) do
@@ -228,6 +235,21 @@ defmodule Phoenix.Router.Helpers do
 
       def static_url(endpoint, path) when is_atom(endpoint) do
         endpoint.static_url <> endpoint.static_path(path)
+      end
+
+      @doc """
+      Generates an integrity hash to a static asset given its file path.
+      """
+      def static_integrity(%Conn{private: %{phoenix_endpoint: endpoint}}, path) do
+        static_integrity(endpoint, path)
+      end
+
+      def static_integrity(%_{endpoint: endpoint}, path) do
+        static_integrity(endpoint, path)
+      end
+
+      def static_integrity(endpoint, path) when is_atom(endpoint) do
+        endpoint.static_integrity(path)
       end
 
       # Functions used by generated helpers
@@ -266,7 +288,7 @@ defmodule Phoenix.Router.Helpers do
   """
   def defhelper(%Route{} = route, exprs) do
     helper = route.helper
-    opts = route.opts
+    opts = route.plug_opts
 
     {bins, vars} = :lists.unzip(exprs.binding)
     segs = expand_segments(exprs.path)
@@ -275,7 +297,7 @@ defmodule Phoenix.Router.Helpers do
       defhelper.(
         unquote(helper),
         unquote(Macro.escape(vars)),
-        unquote(opts),
+        unquote(Macro.escape(opts)),
         unquote(Macro.escape(bins)),
         unquote(Macro.escape(segs))
       )
@@ -285,18 +307,18 @@ defmodule Phoenix.Router.Helpers do
   def defhelper_catch_all({helper, routes_and_exprs}) do
     routes =
       routes_and_exprs
-      |> Enum.map(fn {routes, exprs} -> {routes.opts, Enum.map(exprs.binding, &elem(&1, 0))} end)
+      |> Enum.map(fn {routes, exprs} -> {routes.plug_opts, Enum.map(exprs.binding, &elem(&1, 0))} end)
       |> Enum.sort()
 
-    bindings =
-      routes
-      |> Enum.map(fn {_, bindings} -> Enum.map(bindings, fn _ -> {:_, [], nil} end) end)
-      |> Enum.uniq()
+    lengths =
+	    routes
+	    |> Enum.map(fn {_, bindings} -> length(bindings) end)
+	    |> Enum.uniq()
 
     quote do
       defcatch_all.(
         unquote(helper),
-        unquote(Macro.escape(bindings)),
+        unquote(lengths),
         unquote(Macro.escape(routes))
       )
     end
@@ -305,16 +327,22 @@ defmodule Phoenix.Router.Helpers do
   @doc """
   Callback for generate router catch alls.
   """
-  def raise_route_error(mod, fun, arity, action, routes, params)
-      when is_list(params) or is_map(params) do
+  def raise_route_error(mod, fun, arity, action, routes, params) do
+    cond do
+      not Keyword.has_key?(routes, action) ->
+        "no action #{inspect action} for #{inspect mod}.#{fun}/#{arity}"
+        |> invalid_route_error(fun, routes)
 
-    prelude =
-      if Keyword.has_key?(routes, action) do
-        "no action #{inspect action} for helper #{inspect mod}.#{fun}/#{arity}"
-      else
+      is_list(params) or is_map(params) ->
         "no function clause for #{inspect mod}.#{fun}/#{arity} and action #{inspect action}"
-      end
+        |> invalid_route_error(fun, routes)
 
+      true ->
+        invalid_param_error(mod, fun, arity, action, routes)
+    end
+  end
+
+  defp invalid_route_error(prelude, fun, routes) do
     suggestions =
       for {action, bindings} <- routes do
         bindings = Enum.join([inspect(action) | bindings], ", ")
@@ -323,7 +351,8 @@ defmodule Phoenix.Router.Helpers do
 
     raise ArgumentError, "#{prelude}. The following actions/clauses are supported:\n#{suggestions}"
   end
-  def raise_route_error(mod, fun, arity, action, routes, _params) do
+
+  defp invalid_param_error(mod, fun, arity, action, routes) do
     call_vars = Keyword.fetch!(routes, action)
 
     raise ArgumentError, """
@@ -331,7 +360,7 @@ defmodule Phoenix.Router.Helpers do
     The last argument to this function should be a keyword list or a map.
     For example:
 
-    #{fun}(#{Enum.join(["conn", ":#{action}" | call_vars], ", ")}, page: 5, per_page: 10)
+        #{fun}(#{Enum.join(["conn", ":#{action}" | call_vars], ", ")}, page: 5, per_page: 10)
 
     It is possible you have called this function without defining the proper
     number of path segments in your router.

@@ -54,7 +54,7 @@ Once the connection is established, each incoming message from a client is route
 If the channel server asks to broadcast a message, that message is sent to the local PubSub, which sends it out to any clients connected to the same server and subscribed to that topic.
 
 If there are other nodes in the cluster, the local PubSub also forwards the message to their PubSubs, which send it out to their own subscribers.
-Because only one message has to be sent per additional node, the performance cost of adding nodes in negligible, while each new node supports many more subscribers.
+Because only one message has to be sent per additional node, the performance cost of adding nodes is negligible, while each new node supports many more subscribers.
 
 The message flow looks something like this:
 
@@ -144,14 +144,12 @@ The `Phoenix.Socket.Message` module defines a struct with the following keys whi
 
 ### PubSub
 
-Typically, we don't directly use the Phoenix PubSub layer when developing Phoenix applications.
-Rather, it's used internally by Phoenix itself.
-But we may need to configure it.
-
 PubSub consists of the `Phoenix.PubSub` module and a variety of modules for different adapters and their `GenServer`s.
 These modules contain functions which are the nuts and bolts of organizing Channel communication - subscribing to topics, unsubscribing from topics, and broadcasting messages on a topic.
+PubSub is used internally by Phoenix.
+It's also useful in application development in any case where you want to notify interested processes of an event; for instance, letting all connected [live views](https://github.com/phoenixframework/phoenix_live_view) know that a new comment has been added to a post.
 
-The PubSub system also takes care of getting messages from one node to another, so that it can be sent to all subscribers across the cluster.
+The PubSub system takes care of getting messages from one node to another so that they can be sent to all subscribers across the cluster.
 By default, this is done using [Phoenix.PubSub.PG2](https://hexdocs.pm/phoenix_pubsub/Phoenix.PubSub.PG2.html), which uses native BEAM messaging.
 
 If your deployment environment does not support distributed Elixir or direct communication between servers, Phoenix also ships with a [Redis Adapter](https://hexdocs.pm/phoenix_pubsub_redis/Phoenix.PubSub.Redis.html) that uses Redis to exchange PubSub data. Please see the [Phoenix.PubSub docs](http://hexdocs.pm/phoenix_pubsub/Phoenix.PubSub.html) for more information.
@@ -178,6 +176,8 @@ Phoenix ships with a JavaScript client that is available when generating a new P
   - [dn-phoenix](https://github.com/jfis/dn-phoenix)
 + Elixir
   - [phoenix_gen_socket_client](https://github.com/Aircloak/phoenix_gen_socket_client)
++ GDScript (Godot Game Engine)
+  - [GodotPhoenixChannels](https://github.com/alfredbaudisch/GodotPhoenixChannels)
 
 ## Tying it all together
 Let's tie all these ideas together by building a simple chat application. After [generating a new Phoenix application](https://hexdocs.pm/phoenix/up_and_running.html) we'll see that the endpoint is already set up for us in `lib/hello_web/endpoint.ex`:
@@ -236,7 +236,7 @@ We can use that library to connect to our socket and join our channel, we just n
 
 ```javascript
 // assets/js/socket.js
-...
+// ...
 socket.connect()
 
 // Now that you are connected, you can join channels with a topic:
@@ -251,7 +251,7 @@ export default socket
 After that, we need to make sure `assets/js/socket.js` gets imported into our application JavaScript file. To do that, uncomment the last line in `assets/js/app.js`.
 
 ```javascript
-...
+// ...
 import socket from "./socket"
 ```
 
@@ -260,20 +260,20 @@ Save the file and your browser should auto refresh, thanks to the Phoenix live r
 In `lib/hello_web/templates/page/index.html.eex`, we'll replace the existing code with a container to hold our chat messages, and an input field to send them:
 
 ```html
-<div id="messages"></div>
+<div id="messages" role="log" aria-live="polite"></div>
 <input id="chat-input" type="text"></input>
 ```
 
 Now let's add a couple of event listeners to `assets/js/socket.js`:
 
 ```javascript
-...
+// ...
 let channel           = socket.channel("room:lobby", {})
 let chatInput         = document.querySelector("#chat-input")
 let messagesContainer = document.querySelector("#messages")
 
 chatInput.addEventListener("keypress", event => {
-  if(event.keyCode === 13){
+  if(event.key === 'Enter'){
     channel.push("new_msg", {body: chatInput.value})
     chatInput.value = ""
   }
@@ -289,20 +289,20 @@ export default socket
 All we had to do is detect that enter was pressed and then `push` an event over the channel with the message body. We named the event `"new_msg"`. With this in place, let's handle the other piece of a chat application where we listen for new messages and append them to our messages container.
 
 ```javascript
-...
+// ...
 let channel           = socket.channel("room:lobby", {})
 let chatInput         = document.querySelector("#chat-input")
 let messagesContainer = document.querySelector("#messages")
 
 chatInput.addEventListener("keypress", event => {
-  if(event.keyCode === 13){
+  if(event.key === 'Enter'){
     channel.push("new_msg", {body: chatInput.value})
     chatInput.value = ""
   }
 })
 
 channel.on("new_msg", payload => {
-  let messageItem = document.createElement("li")
+  let messageItem = document.createElement("p")
   messageItem.innerText = `[${Date()}] ${payload.body}`
   messagesContainer.appendChild(messageItem)
 })

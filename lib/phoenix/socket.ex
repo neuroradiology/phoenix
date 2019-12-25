@@ -68,13 +68,16 @@ defmodule Phoenix.Socket do
     * `:transport_pid` - The pid of the socket's transport process
     * `:serializer` - The serializer for socket messages
 
-  ## Logging
+  ## Using options
 
-  Logging for socket connections is set via the `:log` option, for example:
+  On `use Phoenix.Socket`, the following options are accepted:
 
-      use Phoenix.Socket, log: :debug
+    * `:log` - the default level to log socket actions. Defaults
+      to `:info`. May be set to `false` to disable it
 
-  Defaults to the `:info` log level. Pass `false` to disable logging.
+    * `:partitions` - each channel is spawned under a supervisor.
+      This option controls how many supervisors will be spawned
+      to handle channels. Defaults to the number of cores.
 
   ## Garbage collection
 
@@ -103,9 +106,9 @@ defmodule Phoenix.Socket do
   The server may send messages or replies back. For messages, the
   ref uniquely identifies the message. For replies, the ref matches
   the original message. Both data-types also include a join_ref that
-  uniquely identifes the currently joined channel.
+  uniquely identifies the currently joined channel.
 
-  The `Phoenix.Socket` implementation may also sent special messages
+  The `Phoenix.Socket` implementation may also send special messages
   and replies:
 
     * `"phx_error"` - in case of errors, such as a channel process
@@ -131,9 +134,9 @@ defmodule Phoenix.Socket do
       {auth_payload, from, socket}
 
   A custom channel implementation MUST invoke
-  `GenServer.reply(from, reply_payload)` during its initialization
-  with a custom `reply_payload` that will be sent as a reply to the
-  client. Failing to do so will block the socket forever.
+  `GenServer.reply(from, {:ok | :error, reply_payload})` during its
+  initialization with a custom `reply_payload` that will be sent as
+  a reply to the client. Failing to do so will block the socket forever.
 
   A custom channel receives `Phoenix.Socket.Message` structs as regular
   messages from the transport. Replies to those messages and custom
@@ -250,7 +253,7 @@ defmodule Phoenix.Socket do
           channel_pid: pid,
           endpoint: atom,
           handler: atom,
-          id: nil,
+          id: String.t | nil,
           joined: boolean,
           ref: term,
           private: %{},
@@ -269,7 +272,7 @@ defmodule Phoenix.Socket do
       @behaviour Phoenix.Socket
       @before_compile Phoenix.Socket
       Module.register_attribute(__MODULE__, :phoenix_channels, accumulate: true)
-      @phoenix_log Keyword.get(unquote(opts), :log, :info)
+      @phoenix_socket_options unquote(opts)
 
       ## Callbacks
 
@@ -277,11 +280,11 @@ defmodule Phoenix.Socket do
 
       @doc false
       def child_spec(opts) do
-        Phoenix.Socket.__child_spec__(__MODULE__, opts)
+        Phoenix.Socket.__child_spec__(__MODULE__, opts, @phoenix_socket_options)
       end
 
       @doc false
-      def connect(map), do: Phoenix.Socket.__connect__(__MODULE__, map, @phoenix_log)
+      def connect(map), do: Phoenix.Socket.__connect__(__MODULE__, map, @phoenix_socket_options)
 
       @doc false
       def init(state), do: Phoenix.Socket.__init__(state)
@@ -300,19 +303,24 @@ defmodule Phoenix.Socket do
   ## USER API
 
   @doc """
-  Adds a key/value pair to socket assigns.
+  Adds key value pairs to socket assigns.
+
+  A single key value pair may be passed, a keyword list or map
+  of assigns may be provided to be merged into existing socket
+  assigns.
 
   ## Examples
 
-      iex> socket.assigns[:token]
-      nil
-      iex> socket = assign(socket, :token, "bar")
-      iex> socket.assigns[:token]
-      "bar"
-
+      iex> assign(socket, :name, "Elixir")
+      iex> assign(socket, name: "Elixir", logo: "💧")
   """
-  def assign(socket = %Socket{}, key, value) do
-    put_in socket.assigns[key], value
+  def assign(%Socket{} = socket, key, value) do
+    assign(socket, [{key, value}])
+  end
+
+  def assign(%Socket{} = socket, attrs)
+  when is_map(attrs) or is_list(attrs) do
+    %{socket | assigns: Map.merge(socket.assigns, Map.new(attrs))}
   end
 
   @doc """
@@ -400,19 +408,15 @@ defmodule Phoenix.Socket do
 
   ## CALLBACKS IMPLEMENTATION
 
-  def __child_spec__(handler, opts) do
-    import Supervisor.Spec
+  def __child_spec__(handler, opts, socket_options) do
     endpoint = Keyword.fetch!(opts, :endpoint)
-    shutdown = Keyword.get(opts, :shutdown, 5_000)
-    partitions = Keyword.get(opts, :partitions) || System.schedulers_online()
-
-    worker_opts = [shutdown: shutdown, restart: :temporary]
-    worker = worker(Phoenix.Channel.Server, [], worker_opts)
-    args = {endpoint, handler, partitions, worker}
-    supervisor(Phoenix.Socket.PoolSupervisor, [args], id: handler)
+    opts = Keyword.merge(socket_options, opts)
+    partitions = Keyword.get(opts, :partitions, System.schedulers_online())
+    args = {endpoint, handler, partitions}
+    Supervisor.child_spec({Phoenix.Socket.PoolSupervisor, args}, id: handler)
   end
 
-  def __connect__(user_socket, map, log) do
+  def __connect__(user_socket, map, socket_options) do
     %{
       endpoint: endpoint,
       options: options,
@@ -420,30 +424,39 @@ defmodule Phoenix.Socket do
       params: params,
       connect_info: connect_info
     } = map
+
     vsn = params["vsn"] || "1.0.0"
-    meta = Map.merge(map, %{vsn: vsn, user_socket: user_socket, log: log})
 
-    Phoenix.Endpoint.instrument(endpoint, :phoenix_socket_connect, meta, fn ->
-      case negotiate_serializer(Keyword.fetch!(options, :serializer), vsn) do
-        {:ok, serializer} ->
-          user_socket
-          |> user_connect(endpoint, transport, serializer, params, connect_info)
-          |> log_connect_result(user_socket, log)
+    options = Keyword.merge(socket_options, options)
+    start = System.monotonic_time()
 
-        :error -> :error
-      end
-    end)
+    case negotiate_serializer(Keyword.fetch!(options, :serializer), vsn) do
+      {:ok, serializer} ->
+        result = user_connect(user_socket, endpoint, transport, serializer, params, connect_info)
+
+        metadata = %{
+          endpoint: endpoint,
+          transport: transport,
+          params: params,
+          connect_info: connect_info,
+          vsn: vsn,
+          user_socket: user_socket,
+          log: Keyword.get(options, :log, :info),
+          result: result(result),
+          serializer: serializer
+        }
+
+        duration = System.monotonic_time() - start
+        :telemetry.execute([:phoenix, :socket_connected], %{duration: duration}, metadata)
+        result
+
+      :error ->
+        :error
+    end
   end
 
-  defp log_connect_result(result, _user_socket, false = _level), do: result
-  defp log_connect_result({:ok, _} = result, user_socket, level) do
-    Logger.log(level, fn -> "Replied #{inspect(user_socket)} :ok" end)
-    result
-  end
-  defp log_connect_result(:error = result, user_socket, level) do
-    Logger.log(level, fn -> "Replied #{inspect(user_socket)} :error" end)
-    result
-  end
+  defp result({:ok, _}), do: :ok
+  defp result(:error), do: :error
 
   def __init__({state, %{id: id, endpoint: endpoint} = socket}) do
     _ = id && endpoint.subscribe(id, link: true)
@@ -525,7 +538,7 @@ defmodule Phoenix.Socket do
     socket = %Socket{
       handler: handler,
       endpoint: endpoint,
-      pubsub_server: endpoint.__pubsub_server__,
+      pubsub_server: endpoint.config(:pubsub_server),
       serializer: serializer,
       transport: transport
     }
@@ -580,17 +593,17 @@ defmodule Phoenix.Socket do
     {:reply, :ok, encode_reply(socket, reply), {state, socket}}
   end
 
-  defp handle_in(nil, %{event: "phx_join", topic: topic, ref: ref} = message, state, socket) do
+  defp handle_in(nil, %{event: "phx_join", topic: topic, ref: ref, join_ref: join_ref} = message, state, socket) do
     case socket.handler.__channel__(topic) do
       {channel, opts} ->
         case Phoenix.Channel.Server.join(socket, channel, message, opts) do
           {:ok, reply, pid} ->
-            reply = %Reply{join_ref: ref, ref: ref, topic: topic, status: :ok, payload: reply}
-            state = put_channel(state, pid, topic, ref)
+            reply = %Reply{join_ref: join_ref, ref: ref, topic: topic, status: :ok, payload: reply}
+            state = put_channel(state, pid, topic, join_ref)
             {:reply, :ok, encode_reply(socket, reply), {state, socket}}
 
           {:error, reply} ->
-            reply = %Reply{join_ref: ref, ref: ref, topic: topic, status: :error, payload: reply}
+            reply = %Reply{join_ref: join_ref, ref: ref, topic: topic, status: :error, payload: reply}
             {:reply, :error, encode_reply(socket, reply), {state, socket}}
         end
 
@@ -613,6 +626,18 @@ defmodule Phoenix.Socket do
   defp handle_in({pid, _ref}, message, state, socket) do
     send(pid, message)
     {:ok, {state, socket}}
+  end
+
+  defp handle_in(nil, %{event: "phx_leave", ref: ref, topic: topic, join_ref: join_ref}, state, socket) do
+    reply = %Reply{
+      ref: ref,
+      join_ref: join_ref,
+      topic: topic,
+      status: :ok,
+      payload: %{}
+    }
+
+    {:reply, :ok, encode_reply(socket, reply), {state, socket}}
   end
 
   defp handle_in(nil, message, state, socket) do

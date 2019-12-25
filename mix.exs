@@ -7,14 +7,23 @@ defmodule Phoenix.MixProject do
     [
       app: :phoenix,
       version: @version,
-      elixir: "~> 1.4",
+      elixir:  "~> 1.6",
       deps: deps(),
       package: package(),
       lockfile: lockfile(),
       preferred_cli_env: [docs: :docs],
-      consolidate_protocols: Mix.env != :test,
-      xref: [exclude: [Ecto.Type, :ranch, {:cowboy_req, :compact, 1}, Plug.Adapters.Cowboy.Conn, Plug.Cowboy.Conn]],
-      elixirc_paths: elixirc_paths(Mix.env),
+      consolidate_protocols: Mix.env() != :test,
+      xref: [
+        exclude: [
+          Ecto.Type,
+          :ranch,
+          {:cowboy_req, :compact, 1},
+          Plug.Adapters.Cowboy.Conn,
+          Plug.Cowboy.Conn,
+          Plug.Cowboy
+        ]
+      ],
+      elixirc_paths: elixirc_paths(Mix.env()),
       name: "Phoenix",
       docs: docs(),
       aliases: aliases(),
@@ -22,7 +31,7 @@ defmodule Phoenix.MixProject do
       homepage_url: "http://www.phoenixframework.org",
       description: """
       Productive. Reliable. Fast. A productive web framework that
-      does not compromise speed and maintainability.
+      does not compromise speed or maintainability.
       """
     ]
   end
@@ -35,6 +44,7 @@ defmodule Phoenix.MixProject do
       mod: {Phoenix, []},
       extra_applications: [:logger, :eex, :crypto],
       env: [
+        logger: true,
         stacktrace_depth: nil,
         template_engines: [],
         format_encoders: [],
@@ -47,16 +57,17 @@ defmodule Phoenix.MixProject do
 
   defp deps do
     [
-      {:plug, "~> 1.7"},
-      {:phoenix_pubsub, "~> 1.1"},
+      {:plug, "~> 1.8.1 or ~> 1.9"},
+      {:telemetry, "~> 0.4"},
+      {:phoenix_pubsub, "~> 2.0-dev", github: "phoenixframework/phoenix_pubsub"},
 
       # Optional deps
-      {:plug_cowboy, "~> 1.0 or ~> 2.0", optional: true},
+      {:plug_cowboy, "~> 1.0 or ~> 2.1", optional: true},
       {:jason, "~> 1.0", optional: true},
       {:phoenix_html, "~> 2.13", optional: true},
 
       # Docs dependencies
-      {:ex_doc, "~> 0.19.1", only: :docs},
+      {:ex_doc, "~> 0.20", only: :docs},
       {:inch_ex, "~> 0.2", only: :docs},
 
       # Test dependencies
@@ -77,7 +88,7 @@ defmodule Phoenix.MixProject do
       maintainers: ["Chris McCord", "José Valim", "Gary Rennie", "Jason Stiebs"],
       licenses: ["MIT"],
       links: %{github: "https://github.com/phoenixframework/phoenix"},
-      files: ~w(lib priv CHANGELOG.md LICENSE.md mix.exs package.json README.md .formatter.exs)
+      files: ~w(assets/js lib priv CHANGELOG.md LICENSE.md mix.exs package.json README.md .formatter.exs)
     ]
   end
 
@@ -123,6 +134,7 @@ defmodule Phoenix.MixProject do
       "guides/testing/testing_channels.md",
 
       "guides/deployment/deployment.md",
+      "guides/deployment/releases.md",
       "guides/deployment/heroku.md"
       ]
   end
@@ -144,6 +156,7 @@ defmodule Phoenix.MixProject do
     # Phoenix.Controller
     # Phoenix.Endpoint
     # Phoenix.Naming
+    # Phoenix.Logger
     # Phoenix.Param
     # Phoenix.Presence
     # Phoenix.Router
@@ -159,8 +172,7 @@ defmodule Phoenix.MixProject do
       "Adapters and Plugs": [
         Phoenix.CodeReloader,
         Phoenix.Endpoint.CowboyAdapter,
-        Phoenix.Endpoint.Cowboy2Adapter,
-        Phoenix.Logger,
+        Phoenix.Endpoint.Cowboy2Adapter
       ],
 
       "Socket and Transport": [

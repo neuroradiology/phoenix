@@ -8,50 +8,32 @@ When preparing an application for deployment, there are three main steps:
   * Compiling your application assets
   * Starting your server in production
 
-How those are exactly handled depends on your deployment infrastructure. We have included a guide specific to [Heroku](heroku.html), and for anyone not using Heroku, we recommend using [Distillery](https://github.com/bitwalker/distillery) ([guide for using Distillery with Phoenix](https://hexdocs.pm/distillery/guides/phoenix_walkthrough.html)).
+In this guide, we will learn how to get the production environment running locally. You can use the same techniques in this guide to run your application in production, but depending on your deployment infrastructure, extra steps will be necessary.
 
-In any case, this chapter provides a general overview of the deployment steps, which will be useful regardless of your infrastructure or if you want to run in production locally.
+As an example of deploying to other infrastructures, we also discuss two different approaches in our guides: using [Elixir's releases with `mix release`](releases.html) and [by using Heroku](heroku.html). The release guide also has a sample Docker file you can use if you prefer to deploy with container technologies.
 
 Let's explore those steps above one by one.
 
 ## Handling of your application secrets
 
-All Phoenix applications have data that must be kept secure, for example, the username and password for your production database, and the secret Phoenix uses to sign and encrypt important information. This data is typically kept in `config/prod.secret.exs` and by default it is not checked into your version control system.
+All Phoenix applications have data that must be kept secure, for example, the username and password for your production database, and the secret Phoenix uses to sign and encrypt important information. The general recommendation is to keep those in environment variables and load them into your application. This is done in `config/prod.secret.exs`, which is responsible for loading secrets and configuration from environment variables.
 
-Therefore, the first step is to get this data into your production machine. Here is the template shipped with new applications:
+Therefore, you need to make sure the proper relevant variables are set in production:
 
-```elixir
-use Mix.Config
-
-# In this file, we keep production configuration that
-# you likely want to automate and keep it away from
-# your version control system.
-
-# You can generate a new secret by running:
-#
-#     mix phx.gen.secret
-config :foo, Foo.Endpoint,
-  secret_key_base: "A LONG SECRET"
-
-# Configure your database
-config :foo, Foo.Repo,
-  username: "postgres",
-  password: "postgres",
-  database: "foo_prod",
-  size: 20 # The amount of database connections in the pool
+```console
+$ mix phx.gen.secret
+REALLY_LONG_SECRET
+$ export SECRET_KEY_BASE=REALLY_LONG_SECRET
+$ export DATABASE_URL=ecto://USER:PASS@HOST/database
 ```
 
-There are different ways to get this data into production. One option is to replace the data above by environment variables and set those environment variables in your production machine. This is the step that we follow [in the Heroku guides](heroku.html).
+Do not copy those values directly, set `SECRET_KEY_BASE` according to the result of `mix phx.gen.secret` and `DATABASE_URL` according to your database address.
 
-Another approach is to configure the file above and place it in your production machines apart from your code checkout, for example, at "/var/config.prod.exs". After doing so, you will have to import it from `config/prod.exs`. Search for the `import_config` line and replace it by the proper path:
-
-```elixir
-import_config "/var/config.prod.exs"
-```
+If for some reason you do not want to rely on environment variables, you can hard code the secrets in your `config/prod.secret.exs`, but make sure not to check the file into your version control system.
 
 With your secret information properly secured, it is time to configure assets!
-Before taking this step, we need to do one bit of preparation.
-Since we will be readying everything for production, we need to do some setup in that environment by getting our dependencies and compiling.
+
+Before taking this step, we need to do one bit of preparation. Since we will be readying everything for production, we need to do some setup in that environment by getting our dependencies and compiling.
 
 ```console
 $ mix deps.get --only prod
@@ -65,10 +47,8 @@ This step is required only if you have static assets like images, JavaScript, st
 Compilation of static assets happens in two steps:
 
 ```console
-$ cd assets && webpack --mode production
-
+$ npm run deploy --prefix ./assets
 $ mix phx.digest
-
 Check your digested files at "priv/static".
 ```
 
@@ -93,6 +73,12 @@ $ PORT=4001 MIX_ENV=prod mix phx.server
 10:59:19.136 [info] Running MyApp.Endpoint with Cowboy on http://example.com
 ```
 
+To run in detached mode so that the Phoenix server does not stop and continues to run even if you close the terminal:
+
+```console
+$ PORT=4001 MIX_ENV=prod elixir --erl "-detached" -S mix phx.server
+```
+
 In case you get an error message, please read it carefully, and open up a bug report if it is still not clear how to address it.
 
 You can also run your application inside an interactive shell:
@@ -102,28 +88,19 @@ $ PORT=4001 MIX_ENV=prod iex -S mix phx.server
 10:59:19.136 [info] Running MyApp.Endpoint with Cowboy on http://example.com
 ```
 
-Or run it detached from the iex console. This effectively daemonizes the process so it can run independently in the background:
-
-```elixir
-MIX_ENV=prod PORT=4001 elixir --detached -S mix do compile, phx.server
-```
-
-Running the application in detached mode allows us to keep the application running even after we terminate the shell connection with the server.
-
 ## Putting it all together
 
 The previous sections give an overview about the main steps required to deploy your Phoenix application. In practice, you will end-up adding steps of your own as well. For example, if you are using a database, you will also want to run `mix ecto.migrate` before starting the server to ensure your database is up to date.
 
-Overall, here is a script you can use as starting point:
+Overall, here is a script you can use as a starting point:
 
-```elixir
+```console
 # Initial setup
 $ mix deps.get --only prod
 $ MIX_ENV=prod mix compile
 
 # Compile assets
-$ cd assets && webpack --mode production && cd ..
-
+$ npm run deploy --prefix ./assets
 $ mix phx.digest
 
 # Custom tasks (like DB migrations)
@@ -132,3 +109,5 @@ $ MIX_ENV=prod mix ecto.migrate
 # Finally run the server
 $ PORT=4001 MIX_ENV=prod mix phx.server
 ```
+
+And that's it. Next you can learn [how to deploy Phoenix with Elixir's releases](releases.html) and [how to deploy to Heroku](heroku.html).

@@ -1,15 +1,16 @@
 for pattern <- ["../../../installer/lib/phx_new/project.ex",
                 "../../../installer/lib/phx_new/generator.ex",
-                "../../../installer/lib/phx_new/*.ex",
+                "../../../installer/lib/phx_new/single.ex",
+                "../../../installer/lib/phx_new/ecto.ex",
                 "../../../installer/lib/mix/tasks/phx.new.ex",
                 "../../../installer/test/mix_helper.exs"],
-    file <- [_|_] = Path.wildcard(Path.expand(pattern, __DIR__)),
+    file <- Path.wildcard(Path.expand(pattern, __DIR__)),
     do: Code.require_file(file, __DIR__)
 
 # Define a fake live reload socket.
 defmodule Phoenix.LiveReloader.Socket do
   def child_spec(_) do
-    Supervisor.Spec.worker(Task, [fn -> :ok end], restart: :temporary)
+    Supervisor.child_spec({Task, fn -> :ok end}, [])
   end
 end
 
@@ -51,7 +52,7 @@ defmodule Mix.Tasks.Phx.NewTest do
           Mix.Task.run "compile", ["--no-deps-check"]
           assert_received {:mix_shell, :info, ["Generated phx_blog app"]}
           refute_received {:mix_shell, :info, ["Generated phoenix app"]}
-          Mix.shell.flush()
+          Mix.shell().flush()
 
           # Adding a new template touches file (through mix)
           File.touch! "lib/phx_blog_web/views/layout_view.ex", @epoch
@@ -95,7 +96,7 @@ defmodule Mix.Tasks.Phx.NewTest do
   test "assets are in sync with installer" do
     for file <- ~w(favicon.ico phoenix.js phoenix.png) do
       assert File.read!("priv/static/#{file}") ==
-             File.read!("installer/templates/phx_assets/#{file}")
+             File.read!("installer/templates/phx_static/#{file}")
     end
   end
 end

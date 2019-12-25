@@ -67,7 +67,7 @@
   end
 
   @doc """
-  Deletes a <%= inspect schema.alias %>.
+  Deletes a <%= schema.singular %>.
 
   ## Examples
 
@@ -88,7 +88,7 @@
   ## Examples
 
       iex> change_<%= schema.singular %>(<%= schema.singular %>)
-      %Ecto.Changeset{source: %<%= inspect schema.alias %>{}}
+      %Ecto.Changeset{data: %<%= inspect schema.alias %>{}}
 
   """
   def change_<%= schema.singular %>(%<%= inspect schema.alias %>{} = <%= schema.singular %>) do

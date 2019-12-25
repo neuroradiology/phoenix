@@ -99,6 +99,7 @@ defmodule Phoenix.Socket.TransportTest do
     end
 
     def invalid_allowed?(%URI{host: nil}), do: true
+    def invalid_allowed?(%URI{host: ""}), do: true
 
     test "allows custom MFA check to handle invalid host" do
       mfa = {__MODULE__, :invalid_allowed?, []}
@@ -175,6 +176,43 @@ defmodule Phoenix.Socket.TransportTest do
 
       # an allowed host
       refute check_origin("https://host.com/", check_origin: mfa).halted
+    end
+  end
+
+  ## Check subprotocols
+
+  describe "check_subprotocols/2" do
+    defp check_subprotocols(expected, passed) do
+      conn = conn(:get, "/") |> put_req_header("sec-websocket-protocol", Enum.join(passed, ", "))
+      Transport.check_subprotocols(conn, expected)
+    end
+
+    test "does not check subprotocols if not passed expected" do
+      refute check_subprotocols(nil, ["sip"]).halted
+    end
+
+    test "does not check subprotocols if conn is halted" do
+      halted_conn = conn(:get, "/") |> halt()
+      conn = Transport.check_subprotocols(halted_conn, ["sip"])
+      assert conn == halted_conn
+    end
+
+    test "returns first matched subprotocol" do
+      conn = check_subprotocols(["sip", "mqtt"], ["sip", "mqtt"])
+      refute conn.halted
+      assert get_resp_header(conn, "sec-websocket-protocol") == ["sip"]
+    end
+
+    test "halt if expected and passed subprotocols don't match" do
+      conn = check_subprotocols(["sip"], ["mqtt"])
+      assert conn.halted
+      assert conn.status == 403
+    end
+
+    test "halt if expected subprotocols passed in the wrong format" do
+      conn = check_subprotocols("sip", ["mqtt"])
+      assert conn.halted
+      assert conn.status == 403
     end
   end
 

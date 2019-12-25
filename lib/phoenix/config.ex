@@ -12,7 +12,7 @@ defmodule Phoenix.Config do
   @doc """
   Starts a Phoenix configuration handler.
   """
-  def start_link(module, config, defaults, opts \\ []) do
+  def start_link({module, config, defaults, opts}) do
     permanent = Keyword.keys(defaults)
     GenServer.start_link(__MODULE__, {module, config, permanent}, opts)
   end
@@ -70,8 +70,17 @@ defmodule Phoenix.Config do
   Useful to read a particular value at compilation time.
   """
   def from_env(otp_app, module, defaults) do
-    Keyword.merge(defaults, fetch_config(otp_app, module), &merger/3)
+    config = fetch_config(otp_app, module)
+
+    merge(defaults, config)
   end
+
+  @doc """
+  Take 2 keyword lists and merge them recursively.
+
+  Used to merge configuration values into defaults.
+  """
+  def merge(a, b), do: Keyword.merge(a, b, &merger/3)
 
   defp fetch_config(otp_app, module) do
     case Application.fetch_env(otp_app, module) do

@@ -93,7 +93,7 @@ defmodule Mix.Tasks.Phx.NewTest do
       assert_file "phx_blog/assets/.babelrc", "env"
       assert_file "phx_blog/config/dev.exs", fn file ->
         assert file =~ "watchers: [\n    node:"
-        assert file =~ "lib/phx_blog_web/views/.*(ex)"
+        assert file =~ "lib/phx_blog_web/(live|views)/.*(ex)"
         assert file =~ "lib/phx_blog_web/templates/.*(eex)"
       end
       assert_file "phx_blog/assets/static/favicon.ico"
@@ -133,6 +133,7 @@ defmodule Mix.Tasks.Phx.NewTest do
       assert_file "phx_blog/test/support/data_case.ex", ~r"defmodule PhxBlog.DataCase"
       assert_file "phx_blog/lib/phx_blog_web.ex", ~r"defmodule PhxBlogWeb"
       assert_file "phx_blog/priv/repo/migrations/.formatter.exs", ~r"import_deps: \[:ecto_sql\]"
+      assert_file "phx_blog/lib/phx_blog_web/endpoint.ex", ~r"plug Phoenix.Ecto.CheckRepoStatus, otp_app: :phx_blog"
 
       # Install dependencies?
       assert_received {:mix_shell, :yes?, ["\nFetch and install dependencies?"]}
@@ -160,7 +161,7 @@ defmodule Mix.Tasks.Phx.NewTest do
 
   test "new without defaults" do
     in_tmp "new without defaults", fn ->
-      Mix.Tasks.Phx.New.run([@app_name, "--no-html", "--no-webpack", "--no-ecto"])
+      Mix.Tasks.Phx.New.run([@app_name, "--no-html", "--no-webpack", "--no-ecto", "--no-gettext"])
 
       # No webpack
       refute File.read!("phx_blog/.gitignore") |> String.contains?("/assets/node_modules/")
@@ -178,6 +179,18 @@ defmodule Mix.Tasks.Phx.NewTest do
       # No Ecto
       config = ~r/config :phx_blog, PhxBlog.Repo,/
       refute File.exists?("phx_blog/lib/phx_blog/repo.ex")
+      assert_file "phx_blog/lib/phx_blog_web/endpoint.ex", fn file ->
+        refute file =~ "plug Phoenix.Ecto.CheckRepoStatus, otp_app: :phx_blog"
+      end
+
+      # No gettext
+      refute_file "phx_blog/lib/phx_blog_web/gettext.ex"
+      refute_file "phx_blog/priv/gettext/en/LC_MESSAGES/errors.po"
+      refute_file "phx_blog/priv/gettext/errors.pot"
+      assert_file "phx_blog/mix.exs", &refute(&1 =~ ~r":gettext")
+      assert_file "phx_blog/lib/phx_blog_web.ex", &refute(&1 =~ ~r"import AmsMockWeb.Gettext")
+      assert_file "phx_blog/lib/phx_blog_web/views/error_helpers.ex", &refute(&1 =~ ~r"gettext")
+      assert_file "phx_blog/config/dev.exs", &refute(&1 =~ ~r"gettext")
 
       assert_file "phx_blog/.formatter.exs", fn file ->
         assert file =~ "import_deps: [:phoenix]"
@@ -307,7 +320,7 @@ defmodule Mix.Tasks.Phx.NewTest do
       assert_file "custom_path/mix.exs", ":postgrex"
       assert_file "custom_path/config/dev.exs", [~r/username: "postgres"/, ~r/password: "postgres"/, ~r/hostname: "localhost"/]
       assert_file "custom_path/config/test.exs", [~r/username: "postgres"/, ~r/password: "postgres"/, ~r/hostname: "localhost"/]
-      assert_file "custom_path/config/prod.secret.exs", [~r/username: "postgres"/, ~r/password: "postgres"/]
+      assert_file "custom_path/config/prod.secret.exs", [~r/url: database_url/]
       assert_file "custom_path/lib/custom_path/repo.ex", "Ecto.Adapters.Postgres"
 
       assert_file "custom_path/test/support/conn_case.ex", "Ecto.Adapters.SQL.Sandbox.checkout"
@@ -321,11 +334,11 @@ defmodule Mix.Tasks.Phx.NewTest do
       project_path = Path.join(File.cwd!, "custom_path")
       Mix.Tasks.Phx.New.run([project_path, "--database", "mysql"])
 
-      assert_file "custom_path/mix.exs", ":mariaex"
+      assert_file "custom_path/mix.exs", ":myxql"
       assert_file "custom_path/config/dev.exs", [~r/username: "root"/, ~r/password: ""/]
       assert_file "custom_path/config/test.exs", [~r/username: "root"/, ~r/password: ""/]
-      assert_file "custom_path/config/prod.secret.exs", [~r/username: "root"/, ~r/password: ""/]
-      assert_file "custom_path/lib/custom_path/repo.ex", "Ecto.Adapters.MySQL"
+      assert_file "custom_path/config/prod.secret.exs", [~r/url: database_url/]
+      assert_file "custom_path/lib/custom_path/repo.ex", "Ecto.Adapters.MyXQL"
 
       assert_file "custom_path/test/support/conn_case.ex", "Ecto.Adapters.SQL.Sandbox.mode"
       assert_file "custom_path/test/support/channel_case.ex", "Ecto.Adapters.SQL.Sandbox.mode"

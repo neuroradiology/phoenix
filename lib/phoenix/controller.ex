@@ -685,14 +685,14 @@ defmodule Phoenix.Controller do
       raise "cannot render template #{inspect template} because conn.params[\"_format\"] is not set. " <>
             "Please set `plug :accepts, ~w(html json ...)` in your pipeline."
 
-    instrument_render_and_send(conn, format, template, assigns)
+    render_and_send(conn, format, template, assigns)
   end
 
   def render(conn, template, assigns)
       when is_binary(template) and (is_map(assigns) or is_list(assigns)) do
     case Path.extname(template) do
       "." <> format ->
-        instrument_render_and_send(conn, format, template, assigns)
+        render_and_send(conn, format, template, assigns)
       "" ->
         raise "cannot render template #{inspect template} without format. Use an atom if the " <>
               "template format is meant to be set dynamically based on the request format"
@@ -726,32 +726,19 @@ defmodule Phoenix.Controller do
     |> render(template, assigns)
   end
 
-  @doc false
-  def __put_render__(conn, view, template, format, assigns) do
-    content_type = MIME.type(format)
-    conn = prepare_assigns(conn, assigns, template, format)
-    data = Phoenix.View.render_to_iodata(view, template, Map.put(conn.assigns, :conn, conn))
-
-    conn
-    |> ensure_resp_content_type(content_type)
-    |> resp(conn.status || 200, data)
-  end
-
-  defp instrument_render_and_send(conn, format, template, assigns) do
+  defp render_and_send(conn, format, template, assigns) do
     template = template_name(template, format)
 
     view =
       Map.get(conn.private, :phoenix_view) ||
         raise "a view module was not specified, set one with put_view/2"
 
-    metadata = %{view: view, template: template, format: format, conn: conn}
+    conn = prepare_assigns(conn, assigns, template, format)
+    data = Phoenix.View.render_to_iodata(view, template, Map.put(conn.assigns, :conn, conn))
 
-    conn =
-      Phoenix.Endpoint.instrument(conn, :phoenix_controller_render, metadata, fn ->
-        __put_render__(conn, view, template, format, assigns)
-      end)
-
-    send_resp(conn)
+    conn
+    |> ensure_resp_content_type(MIME.type(format))
+    |> send_resp(conn.status || 200, data)
   end
 
   defp prepare_assigns(conn, assigns, template, format) do
@@ -806,7 +793,7 @@ defmodule Phoenix.Controller do
   end
 
   @doc """
-  Puts the URL or `%URI{}` to be used for route generation.
+  Puts the url string or `%URI{}` to be used for route generation.
 
   This function overrides the default URL generation pulled
   from the `%Plug.Conn{}`'s endpoint configuration.
@@ -824,8 +811,8 @@ defmodule Phoenix.Controller do
 
   Now when you call `Routes.some_route_url(conn, ...)`, it will use
   the router url set above. Keep in mind that, if you want to generate
-  routes to the current domain, it is preferred to use `Routes.some_route_path`
-  helpers, as those are always relative.
+  routes to the *current* domain, it is preferred to use
+  `Routes.some_route_path` helpers, as those are always relative.
   """
   def put_router_url(conn, %URI{} = uri) do
     put_private(conn, :phoenix_router_url, uri)
@@ -835,7 +822,26 @@ defmodule Phoenix.Controller do
   end
 
   @doc """
+  Puts the URL or `%URI{}` to be used for the static url generation.
+
+  Using this function on a `%Plug.Conn{}` struct tells `static_url/2` to use
+  the given information for URL generation instead of the the `%Plug.Conn{}`'s
+  endpoint configuration (much like `put_router_url/2` but for static URLs).
+  """
+  def put_static_url(conn, %URI{} = uri) do
+    put_private(conn, :phoenix_static_url, uri)
+  end
+  def put_static_url(conn, url) when is_binary(url) do
+    put_private(conn, :phoenix_static_url, url)
+  end
+
+  @doc """
   Puts the format in the connection.
+
+  This format is used when rendering a template as an atom.
+  For example, `render(conn, :foo)` will render `"foo.FORMAT"`
+  where the format is the one set here. The default format
+  is typically set from the negotiation done in `accepts/2`.
 
   See `get_format/1` for retrieval.
   """
@@ -843,6 +849,11 @@ defmodule Phoenix.Controller do
 
   @doc """
   Returns the request format, such as "json", "html".
+
+  This format is used when rendering a template as an atom.
+  For example, `render(conn, :foo)` will render `"foo.FORMAT"`
+  where the format is the one set here. The default format
+  is typically set from the negotiation done in `accepts/2`.
   """
   def get_format(conn) do
     conn.private[:phoenix_format] || conn.params["_format"]
@@ -870,10 +881,20 @@ defmodule Phoenix.Controller do
     * `:content_type` - the content type of the file or binary
       sent as download. It is automatically inferred from the
       filename extension
+    * `:disposition` - specifies dispositon type
+      (`:attachment` or `:inline`). If `:attachment` was used,
+      user will be prompted to save the file. If `:inline` was used,
+      the browser will attempt to open the file.
+      Defaults to `:attachment`.
     * `:charset` - the charset of the file, such as "utf-8".
       Defaults to none
     * `:offset` - the bytes to offset when reading. Defaults to `0`
     * `:length` - the total bytes to read. Defaults to `:all`
+    * `:encode` - encodes the filename using `URI.encode_www_form/1`.
+      Defaults to `true`. When `false`, disables encoding. If you
+      disable encoding, you need to guarantee there are no special
+      characters in the filename, such as quotes, newlines, etc.
+      Otherwise you can expose your application to security attacks
 
   ## Examples
 
@@ -915,12 +936,20 @@ defmodule Phoenix.Controller do
 
   defp prepare_send_download(conn, filename, opts) do
     content_type = opts[:content_type] || MIME.from_path(filename)
-    encoded_filename = URI.encode_www_form(filename)
+    encoded_filename = encode_filename(filename, Keyword.get(opts, :encode, true))
+    disposition_type = get_disposition_type(Keyword.get(opts, :disposition, :attachment))
     warn_if_ajax(conn)
     conn
     |> put_resp_content_type(content_type, opts[:charset])
-    |> put_resp_header("content-disposition", ~s[attachment; filename="#{encoded_filename}"])
+    |> put_resp_header("content-disposition", ~s[#{disposition_type}; filename="#{encoded_filename}"])
   end
+
+  defp encode_filename(filename, false), do: filename
+  defp encode_filename(filename, true), do: URI.encode_www_form(filename)
+
+  defp get_disposition_type(:attachment), do: "attachment"
+  defp get_disposition_type(:inline), do: "inline"
+  defp get_disposition_type(other), do: raise ArgumentError, "expected :disposition to be :attachment or :inline, got: #{inspect(other)}"
 
   defp ajax?(conn) do
     case get_req_header(conn, "x-requested-with") do
@@ -1006,22 +1035,26 @@ defmodule Phoenix.Controller do
 
   It sets the following headers:
 
-      * `x-frame-options` - set to SAMEORIGIN to avoid clickjacking
-        through iframes unless in the same origin
-      * `x-content-type-options` - set to nosniff. This requires
-        script and style tags to be sent with proper content type
-      * `x-xss-protection` - set to "1; mode=block" to improve XSS
-        protection on both Chrome and IE
-      * `x-download-options` - set to noopen to instruct the browser
-        not to open a download directly in the browser, to avoid
-        HTML files rendering inline and accessing the security
-        context of the application (like critical domain cookies)
-      * `x-permitted-cross-domain-policies` - set to none to restrict
-        Adobe Flash Player’s access to data
-      * `cross-origin-window-policy` - set to deny to avoid window
-        control attacks
+    * `x-frame-options` - set to SAMEORIGIN to avoid clickjacking
+      through iframes unless in the same origin
+    * `x-content-type-options` - set to nosniff. This requires
+      script and style tags to be sent with proper content type
+    * `x-xss-protection` - set to "1; mode=block" to improve XSS
+      protection on both Chrome and IE
+    * `x-download-options` - set to noopen to instruct the browser
+      not to open a download directly in the browser, to avoid
+      HTML files rendering inline and accessing the security
+      context of the application (like critical domain cookies)
+    * `x-permitted-cross-domain-policies` - set to none to restrict
+      Adobe Flash Player’s access to data
+    * `cross-origin-window-policy` - set to deny to avoid window
+      control attacks
 
   A custom headers map may also be given to be merged with defaults.
+  It is recommended for custom header keys to be in lowercase, to avoid sending
+  duplicate keys in a request.
+  Additionally, responses with mixed-case headers served over HTTP/2 are not
+  considered valid by common clients, resulting in dropped responses.
   """
   def put_secure_browser_headers(conn, headers \\ %{})
   def put_secure_browser_headers(conn, []) do
@@ -1344,12 +1377,26 @@ defmodule Phoenix.Controller do
   end
 
   @doc """
-  Returns the current request path, with and without query params.
+  Returns the current request path with its default query parameters:
 
-  By default, the connection's query params are included in
-  the generated path. Custom query params may be used instead
-  by providing a map of your own params. You may also retrieve
-  only the request path by passing an empty map of params.
+      iex> current_path(conn)
+      "/users/123?existing=param"
+
+  See `current_path/2` to override the default parameters.
+  """
+  def current_path(%Plug.Conn{query_string: ""} = conn) do
+    conn.request_path
+  end
+
+  def current_path(%Plug.Conn{query_string: query_string} = conn) do
+    conn.request_path <> "?" <> query_string
+  end
+
+  @doc """
+  Returns the current path with the given query parameters.
+
+  You may also retrieve only the request path by passing an
+  empty map of params.
 
   ## Examples
 
@@ -1366,12 +1413,6 @@ defmodule Phoenix.Controller do
       "/users/123"
 
   """
-  def current_path(%Plug.Conn{query_string: ""} = conn) do
-    conn.request_path
-  end
-  def current_path(%Plug.Conn{query_string: query_string} = conn) do
-    conn.request_path <> "?" <> query_string
-  end
   def current_path(%Plug.Conn{} = conn, params) when params == %{} do
     conn.request_path
   end
@@ -1379,8 +1420,20 @@ defmodule Phoenix.Controller do
     conn.request_path <> "?" <> Plug.Conn.Query.encode(params)
   end
 
+  @doc """
+  Returns the current request url with its default query parameters:
+
+      iex> current_url(conn)
+      "https://www.example.com/users/123?existing=param"
+
+  See `current_url/2` to override the default parameters.
+  """
+  def current_url(%Plug.Conn{} = conn) do
+    Phoenix.Router.Helpers.url(router_module(conn), conn) <> current_path(conn)
+  end
+
   @doc ~S"""
-  Returns the current request URL, with and without query params.
+  Returns the current request URL with query params.
 
   The path will be retrieved from the currently requested path via
   `current_path/1`. The scheme, host and others will be received from
@@ -1420,11 +1473,8 @@ defmodule Phoenix.Controller do
       end
 
   However, if you want all generated URLs to always have a certain schema,
-  host, etc, you may invoke `put_router_url/2`.
+  host, etc, you may use `put_router_url/2`.
   """
-  def current_url(%Plug.Conn{} = conn) do
-    Phoenix.Router.Helpers.url(router_module(conn), conn) <> current_path(conn)
-  end
   def current_url(%Plug.Conn{} = conn, %{} = params) do
     Phoenix.Router.Helpers.url(router_module(conn), conn) <> current_path(conn, params)
   end

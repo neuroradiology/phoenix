@@ -1,9 +1,3 @@
-# Since configuration is shared in umbrella projects, this file
-# should only configure the :<%= web_app_name %> application itself
-# and only for organization purposes. All other config goes to
-# the umbrella root.
-use Mix.Config
-
 # For development, we disable any cache and enable
 # debugging and code reloading.
 #
@@ -21,7 +15,7 @@ config :<%= web_app_name %>, <%= endpoint_module %>,
       "--mode",
       "development",
       "--watch-stdin",
-      cd: Path.expand("../assets", __DIR__)
+      cd: Path.expand("../apps/<%= web_app_name %>/assets", __DIR__)
     ]
   ]<% else %>[]<% end %>
 
@@ -53,9 +47,9 @@ config :<%= web_app_name %>, <%= endpoint_module %>,
 config :<%= web_app_name %>, <%= endpoint_module %>,
   live_reload: [
     patterns: [
-      ~r{priv/static/.*(js|css|png|jpeg|jpg|gif|svg)$},
-      ~r{priv/gettext/.*(po)$},
-      ~r{lib/<%= web_app_name %>/views/.*(ex)$},
-      ~r{lib/<%= web_app_name %>/templates/.*(eex)$}
+      ~r"priv/static/.*(js|css|png|jpeg|jpg|gif|svg)$",<%= if gettext do %>
+      ~r"priv/gettext/.*(po)$",<% end %>
+      ~r"lib/<%= web_app_name %>/(live|views)/.*(ex)$",
+      ~r"lib/<%= web_app_name %>/templates/.*(eex)$"
     ]
   ]<% end %>

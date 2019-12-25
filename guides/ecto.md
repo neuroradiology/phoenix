@@ -2,19 +2,16 @@
 
 Most web applications today need some form of data validation and persistence. In the Elixir ecosystem, we have Ecto to enable this. Before we jump into building database-backed web features, we're going to focus on the finer details of Ecto to give a solid base to build our web features on top of. Let's get started!
 
-Ecto currently has adapters for the following databases:
+Ecto has out of the box support for the following databases:
 
-* PostgreSQL
-* MySQL
-* MSSQL
-* SQLite3
-* MongoDB
+* PostgreSQL (via [`postgrex`](https://github.com/elixir-ecto/postgrex))
+* MySQL (via [`myxql`](https://github.com/elixir-ecto/myxql))
 
 Newly generated Phoenix projects include Ecto with the PostgreSQL adapter by default (you can pass the `--no-ecto` flag to exclude this).
 
 For a thorough, general guide for Ecto, check out the [Ecto getting started guide](https://hexdocs.pm/ecto/getting-started.html). For an overview of all Ecto specific mix tasks for Phoenix, see the [mix tasks guide](phoenix_mix_tasks.html#ecto-specific-mix-tasks).
 
-This guide assumes that we have generated our new application with Ecto integration and that we will be using PostgreSQL. For instructions on switching to MySQL, please see the [Using MySQL](ecto.html#using-mysql) section.
+This guide assumes that we have generated our new application with Ecto integration and that we will be using PostgreSQL. For instructions on switching to MySQL, please see the [Using MySQL](#using-mysql) section.
 
 The default Postgres configuration has a superuser account with username 'postgres' and the password 'postgres'. If you take a look at the file `config/dev.exs`, you'll see that Phoenix works off this assumption. If you don't have this account already setup on your machine, you can connect to your postgres instance by typing `psql` and then entering the following commands:
 
@@ -22,6 +19,7 @@ The default Postgres configuration has a superuser account with username 'postgr
 CREATE USER postgres;
 ALTER USER postgres PASSWORD 'postgres';
 ALTER USER postgres WITH SUPERUSER;
+\q
 ```
 
 Now that we have Ecto and Postgres installed and configured, the easiest way to use Ecto is to generate an Ecto *schema* through the `phx.gen.schema` task. Ecto schemas are a way for us to specify how Elixir data types map to and from external sources, such as database tables. Let's generate a `User` schema with `name`, `email`, `bio`, and `number_of_pets` fields.
@@ -124,7 +122,7 @@ Our `Hello.Repo` module is the foundation we need to work with databases in a Ph
 defmodule Hello.Repo do
   use Ecto.Repo,
     otp_app: :hello,
-    adapter: Ecto.Adapter.Postgres
+    adapter: Ecto.Adapters.Postgres
 end
 ```
 
@@ -470,10 +468,9 @@ defmodule HelloPhoenix.MixProject do
   defp deps do
     [
       {:phoenix, "~> 1.4.0"},
-      {:phoenix_pubsub, "~> 1.1"},
       {:phoenix_ecto, "~> 4.0"},
-      {:ecto_sql, "~> 3.0"},
-      {:mariaex, ">= 0.0.0"},
+      {:ecto_sql, "~> 3.1"},
+      {:myxql, ">= 0.0.0"},
       {:phoenix_html, "~> 2.11"},
       {:phoenix_live_reload, "~> 1.2", only: :dev},
       {:gettext, "~> 0.11"},
@@ -494,7 +491,7 @@ database: "hello_phoenix_dev"
 
 If we have an existing configuration block for our `HelloPhoenix.Repo`, we can simply change the values to match our new ones. We also need to configure the correct values in the `config/test.exs` and `config/prod.secret.exs` files as well.
 
-The last change is to open up `lib/hello_phoenix/repo.ex` and make sure to set the `:adapter` to `Ecto.Adapters.MySQL`.
+The last change is to open up `lib/hello_phoenix/repo.ex` and make sure to set the `:adapter` to `Ecto.Adapters.MyXQL`.
 
 Now all we need to do is fetch our new dependency, and we'll be ready to go.
 

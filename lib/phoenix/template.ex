@@ -99,8 +99,14 @@ defmodule Phoenix.Template do
 
   alias Phoenix.Template
 
-  @engines  [eex: Phoenix.Template.EExEngine, exs: Phoenix.Template.ExsEngine]
+  @engines [
+    eex: Phoenix.Template.EExEngine,
+    exs: Phoenix.Template.ExsEngine,
+    leex: Phoenix.LiveView.Engine
+  ]
+
   @default_pattern "*"
+  @private_assigns [:__phx_template_not_found__]
 
   defmodule UndefinedError do
     @moduledoc """
@@ -111,7 +117,7 @@ defmodule Phoenix.Template do
     def message(exception) do
       "Could not render #{inspect exception.template} for #{inspect exception.module}, "
         <> "please define a matching clause for render/2 or define a template at "
-        <> "#{inspect Path.relative_to_cwd exception.root}. "
+        <> "#{inspect Path.join(Path.relative_to_cwd(exception.root), exception.pattern)}. "
         <> available_templates(exception.available)
         <> "\nAssigns:\n\n"
         <> inspect(exception.assigns)
@@ -179,16 +185,12 @@ defmodule Phoenix.Template do
         template_not_found(template, Map.put(assigns, :__phx_template_not_found__, __MODULE__))
       end
 
-      @doc """
-      Returns the template root alongside all templates.
-      """
+      @doc false
       def __templates__ do
         {@phoenix_root, @phoenix_pattern, unquote(names)}
       end
 
-      @doc """
-      Returns true whenever the list of templates changes in the filesystem.
-      """
+      @doc false
       def __phoenix_recompile__? do
         unquote(hash(root, pattern, engines)) != Template.hash(@phoenix_root, @phoenix_pattern, @phoenix_template_engines)
       end
@@ -333,7 +335,7 @@ defmodule Phoenix.Template do
   def raise_template_not_found(view_module, template, assigns) do
     {root, pattern, names} = view_module.__templates__()
     raise UndefinedError,
-      assigns: assigns,
+      assigns: Map.drop(assigns, @private_assigns),
       available: names,
       template: template,
       root: root,

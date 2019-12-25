@@ -4,8 +4,7 @@ defmodule Phx.New.Generator do
   alias Phx.New.{Project}
 
   @phoenix Path.expand("../..", __DIR__)
-
-  @phoenix_version Version.parse!("1.4.0")
+  @phoenix_version Version.parse!(Mix.Project.config[:version])
 
   @callback prepare_project(Project.t) :: Project.t
   @callback generate(Project.t) :: Project.t
@@ -13,8 +12,8 @@ defmodule Phx.New.Generator do
   defmacro __using__(_env) do
     quote do
       @behaviour unquote(__MODULE__)
-      import unquote(__MODULE__)
       import Mix.Generator
+      import unquote(__MODULE__)
       Module.register_attribute(__MODULE__, :templates, accumulate: true)
       @before_compile unquote(__MODULE__)
     end
@@ -22,23 +21,21 @@ defmodule Phx.New.Generator do
 
   defmacro __before_compile__(env) do
     root = Path.expand("../../templates", __DIR__)
-    templates_ast = for {name, mappings} <- Module.get_attribute(env.module, :templates) do
-      for {format, source, _, _} <- mappings, format != :keep do
-        path = Path.join(root, source)
-        quote do
-          @external_resource unquote(path)
-          def render(unquote(name), unquote(source)), do: unquote(File.read!(path))
+
+    templates_ast =
+      for {name, mappings} <- Module.get_attribute(env.module, :templates) do
+        for {format, source, _, _} <- mappings, format != :keep do
+          path = Path.join(root, source)
+          quote do
+            @external_resource unquote(path)
+            def render(unquote(name), unquote(source)), do: unquote(File.read!(path))
+          end
         end
       end
-    end
 
     quote do
       unquote(templates_ast)
       def template_files(name), do: Keyword.fetch!(@templates, name)
-      # Embed missing files from Phoenix static.
-      embed_text :phoenix_js, from_file: Path.expand("../../templates/phx_assets/phoenix.js", unquote(__DIR__))
-      embed_text :phoenix_png, from_file: Path.expand("../../templates/phx_assets/phoenix.png", unquote(__DIR__))
-      embed_text :phoenix_favicon, from_file: Path.expand("../../templates/phx_assets/favicon.ico", unquote(__DIR__))
     end
   end
 
@@ -58,8 +55,9 @@ defmodule Phx.New.Generator do
           File.mkdir_p!(target)
         :text ->
           create_file(target, mod.render(name, source))
-        :append ->
-          append_to(Path.dirname(target), Path.basename(target), mod.render(name, source))
+        :config ->
+          contents = EEx.eval_string(mod.render(name, source), project.binding, file: source)
+          config_inject(Path.dirname(target), Path.basename(target), contents)
         :eex  ->
           contents = EEx.eval_string(mod.render(name, source), project.binding, file: source)
           create_file(target, contents)
@@ -67,9 +65,37 @@ defmodule Phx.New.Generator do
     end
   end
 
-  def append_to(path, file, contents) do
+  def config_inject(path, file, to_inject) do
     file = Path.join(path, file)
-    File.write!(file, File.read!(file) <> contents)
+
+    contents =
+      case File.read(file) do
+        {:ok, bin} -> bin
+        {:error, _} -> "use Mix.Config\n"
+      end
+
+    with :error <- split_with_self(contents, "use Mix.Config\n"),
+         :error <- split_with_self(contents, "import Config\n") do
+      Mix.raise ~s[Could not find "use Mix.Config" or "import Config" in #{inspect(file)}]
+    else
+      [left, middle, right] ->
+        File.write!(file, [left, middle, ?\n, String.trim(to_inject), ?\n, right])
+    end
+  end
+
+  def inject_umbrella_config_defaults(project) do
+    unless File.exists?(Project.join_path(project, :project, "config/dev.exs")) do
+      path = Project.join_path(project, :project, "config/config.exs")
+      extra = Phx.New.Umbrella.render(:new, "phx_umbrella/config/extra_config.exs")
+      File.write(path, [File.read!(path), extra])
+    end
+  end
+
+  defp split_with_self(contents, text) do
+    case :binary.split(contents, text) do
+      [left, right] -> [left, text, right]
+      [_] -> :error
+    end
   end
 
   def in_umbrella?(app_path) do
@@ -84,6 +110,7 @@ defmodule Phx.New.Generator do
     db           = Keyword.get(opts, :database, "postgres")
     ecto         = Keyword.get(opts, :ecto, true)
     html         = Keyword.get(opts, :html, true)
+    gettext      = Keyword.get(opts, :gettext, true)
     webpack      = Keyword.get(opts, :webpack, true)
     dev          = Keyword.get(opts, :dev, false)
     phoenix_path = phoenix_path(project, dev)
@@ -123,12 +150,12 @@ defmodule Phx.New.Generator do
       phoenix_static_path: phoenix_static_path(phoenix_path),
       pubsub_server: pubsub_server,
       secret_key_base: random_string(64),
-      prod_secret_key_base: random_string(64),
       signing_salt: random_string(8),
       in_umbrella: project.in_umbrella?,
       webpack: webpack,
       ecto: ecto,
       html: html,
+      gettext: gettext,
       adapter_app: adapter_app,
       adapter_module: adapter_module,
       adapter_config: adapter_config,
@@ -147,27 +174,32 @@ defmodule Phx.New.Generator do
     Macro.camelize(project.app) != inspect(project.app_mod)
   end
 
-  def gen_ecto_config(%Project{app_path: app_path, binding: binding}) do
+  def gen_ecto_config(%Project{project_path: project_path, binding: binding}) do
     adapter_config = binding[:adapter_config]
 
-    append_to app_path, "config/dev.exs", """
-
+    config_inject project_path, "config/dev.exs", """
     # Configure your database
     config :#{binding[:app_name]}, #{binding[:app_module]}.Repo#{kw_to_config adapter_config[:dev]},
       pool_size: 10
     """
 
-    append_to app_path, "config/test.exs", """
-
+    config_inject project_path, "config/test.exs", """
     # Configure your database
     config :#{binding[:app_name]}, #{binding[:app_module]}.Repo#{kw_to_config adapter_config[:test]}
     """
 
-    append_to app_path, "config/prod.secret.exs", """
+    config_inject project_path, "config/prod.secret.exs", """
+    database_url =
+      System.get_env("DATABASE_URL") ||
+        raise \"""
+        environment variable DATABASE_URL is missing.
+        For example: ecto://USER:PASS@HOST/DATABASE
+        \"""
 
-    # Configure your database
-    config :#{binding[:app_name]}, #{binding[:app_module]}.Repo#{kw_to_config adapter_config[:prod]},
-      pool_size: 15
+    config :#{binding[:app_name]}, #{binding[:app_module]}.Repo,
+      # ssl: true,
+      url: database_url,
+      pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10")
     """
   end
 
@@ -179,23 +211,20 @@ defmodule Phx.New.Generator do
   end
 
   defp get_ecto_adapter("mysql", app, module) do
-    {:mariaex, Ecto.Adapters.MySQL, db_config(app, module, "root", "")}
+    {:myxql, Ecto.Adapters.MyXQL, db_config(app, module, "root", "")}
   end
   defp get_ecto_adapter("postgres", app, module) do
     {:postgrex, Ecto.Adapters.Postgres, db_config(app, module, "postgres", "postgres")}
-  end
-  defp get_ecto_adapter("mssql", app, module) do
-    {:mssql_ecto, MssqlEcto, db_config(app, module, "sa", "")}
   end
   defp get_ecto_adapter(db, _app, _mod) do
     Mix.raise "Unknown database #{inspect db}"
   end
 
   defp db_config(app, module, user, pass) do
-    [dev:  [username: user, password: pass, database: "#{app}_dev", hostname: "localhost"],
+    [dev:  [username: user, password: pass, database: "#{app}_dev", hostname: "localhost",
+            show_sensitive_data_on_connection_error: true],
      test: [username: user, password: pass, database: "#{app}_test", hostname: "localhost",
             pool: Ecto.Adapters.SQL.Sandbox],
-     prod: [username: user, password: pass, database: "#{app}_prod"],
      test_setup_all: "Ecto.Adapters.SQL.Sandbox.mode(#{inspect module}.Repo, :manual)",
      test_setup: ":ok = Ecto.Adapters.SQL.Sandbox.checkout(#{inspect module}.Repo)",
      test_async: "Ecto.Adapters.SQL.Sandbox.mode(#{inspect module}.Repo, {:shared, self()})"]

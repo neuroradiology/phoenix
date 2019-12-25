@@ -65,20 +65,17 @@ if code_reloading? do
 end
 ```
 
-[Plug.RequestId](https://hexdocs.pm/plug/Plug.RequestId.html) generates a unique id for each request and [Plug.Logger](https://hexdocs.pm/plug/Plug.Logger.html) logs the request path, status code and request time by default.
+[Plug.RequestId](https://hexdocs.pm/plug/Plug.RequestId.html) generates a unique id for each request and [Plug.Telemetry](https://hexdocs.pm/plug/Plug.Telemetry.html) adds instrumentation points so Phoenix can log the request path, status code and request time by default.
 
 ```elixir
 plug Plug.RequestId
-plug Plug.Logger
+plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 ```
 
 [Plug.Session](https://hexdocs.pm/plug/Plug.Session.html) handles the session cookies and session stores.
 
 ```elixir
-plug Plug.Session,
-  store: :cookie,
-  key: "_hello_key",
-  signing_salt: "change_me"
+plug Plug.Session, @session_options
 ```
 
 By default the last plug in the endpoint is the router. The router matches a path to a particular controller action or plug. The router is covered in the [Routing Guide](routing.html).
@@ -111,6 +108,7 @@ config :hello, HelloWeb.Endpoint,
   cache_static_manifest: "priv/static/cache_manifest.json",
   https: [
     port: 443,
+    cipher_suite: :strong,
     otp_app: :hello,
     keyfile: System.get_env("SOME_APP_SSL_KEY_PATH"),
     certfile: System.get_env("SOME_APP_SSL_CERT_PATH"),
@@ -126,7 +124,7 @@ Without the `otp_app:` key, we need to provide absolute paths to the files where
 Path.expand("../../../some/path/to/ssl/key.pem", __DIR__)
 ```
 
-If you require further customization to the TLS versions or ciphers used you can include additional `https:` configuration. For example to disable older versions of TLS which are now considered insecure you could add `versions: [:'tlsv1.2']`. More information on the available settings is available in the [Erlang SSL docs](http://erlang.org/doc/man/ssl.html) (see "TLS/DTLS OPTION DESCRIPTIONS - SERVER SIDE").
+The options under the `https:` key are passed to the Plug adapter, typically `Plug.Cowboy`, which in turn uses `Plug.SSL` to select the TLS socket options. Please refer to the documentation for [Plug.SSL.configure/1](https://hexdocs.pm/plug/Plug.SSL.html#configure/1) for more information on the available options and their defaults. The [Plug HTTPS Guide](https://hexdocs.pm/plug/https.html) and the [Erlang/OTP ssl](http://erlang.org/doc/man/ssl.html) documentation also provide valuable information.
 
 
 ### SSL in Development
@@ -164,9 +162,11 @@ config :my_app, MyApp.Endpoint,
   force_ssl: [rewrite_on: [:x_forwarded_proto], host: nil]
 ```
 
+In these examples, the `rewrite_on:` key specifies the HTTP header used by a reverse proxy or load balancer in front of the application to indicate whether the request was received over HTTP or HTTPS. For more information on the implications of offloading TLS to an external element, in particular relating to secure cookies, refer to the [Plug HTTPS Guide](https://hexdocs.pm/plug/https.html#offloading-tls). Keep in mind that the options passed to `Plug.SSL` in that document should be set using the `force_ssl:` endpoint option in a Phoenix application.
+
 ### HSTS
 
-HSTS or "strict-transport-security" is a mechanism that allows a website to declare itself as only accessible via a secure connection (HTTPS). It was introduced to prevent man-in-the-middle attacks that strip SSL/TLS. It causes web browers to redirect from HTTP to HTTPS and refuse to connect unless the connection uses SSL/TLS.
+HSTS or "strict-transport-security" is a mechanism that allows a website to declare itself as only accessible via a secure connection (HTTPS). It was introduced to prevent man-in-the-middle attacks that strip SSL/TLS. It causes web browsers to redirect from HTTP to HTTPS and refuse to connect unless the connection uses SSL/TLS.
 
 With `force_ssl: :hsts` set the `Strict-Transport-Security` header is set with a max age that defines the length of time the policy is valid for. Modern web browsers will respond to this by redirecting from HTTP to HTTPS for the standard case but it does have other consequenses. [RFC6797](https://tools.ietf.org/html/rfc6797) which defines HSTS also specifies **that the browser should keep track of the policy of a host and apply it until it expires.** It also specifies that **traffic on any port other than 80 is assumed to be encrypted** as per the policy.
 

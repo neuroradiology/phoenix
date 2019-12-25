@@ -26,8 +26,7 @@ defmodule Mix.Tasks.Phx.New.Ecto do
     * `--database` - specify the database adapter for Ecto. One of:
 
         * `postgres` (https://github.com/elixir-ecto/postgrex)
-        * `mysql` (https://github.com/xerions/mariaex)
-        * `mssql` (https://github.com/findmypast-oss/mssqlex)
+        * `mysql` (https://github.com/elixir-ecto/myxql)
 
       Please check the driver docs, between parentheses, for more information
       and requirements. Defaults to "postgres".
@@ -57,6 +56,6 @@ defmodule Mix.Tasks.Phx.New.Ecto do
       Mix.raise "The ecto task can only be run within an umbrella's apps directory"
     end
 
-    Mix.Tasks.Phx.New.run(args ++ ["--no-webpack", "--ecto"], Phx.New.Ecto)
+    Mix.Tasks.Phx.New.run(args ++ ["--no-webpack", "--ecto"], Phx.New.Ecto, :app_path)
   end
 end

@@ -1,6 +1,6 @@
 defmodule Phoenix.Channel.Server do
   @moduledoc false
-  use GenServer
+  use GenServer, restart: :temporary
 
   require Logger
   require Phoenix.Endpoint
@@ -12,18 +12,9 @@ defmodule Phoenix.Channel.Server do
   ## Socket API
 
   @doc """
-  Starts a channel server.
-
-  It is just some basic indirection to please a simple_one_for_one supervisor.
-  """
-  def start_link(channel, triplet) do
-    channel.start_link(triplet)
-  end
-
-  @doc """
   Joins the channel in socket with authentication payload.
   """
-  @spec join(Socket.t, module, Message.t, keyword) :: {:ok, term, pid} | {:error, term}
+  @spec join(Socket.t(), module, Message.t(), keyword) :: {:ok, term, pid} | {:error, term}
   def join(socket, channel, message, opts) do
     %{topic: topic, payload: payload, ref: join_ref} = message
     assigns = Map.merge(socket.assigns, Keyword.get(opts, :assigns, %{}))
@@ -31,19 +22,28 @@ defmodule Phoenix.Channel.Server do
 
     ref = make_ref()
     from = {self(), ref}
+    child_spec = channel.child_spec({payload, from, socket})
 
-    # TODO: When we migrate to DynamicSupervisor, we will start
-    # {channel, {payload, from, socket}} and have its child spec
-    # point back to this module start link.
-    args = [channel, {payload, from, socket}]
-
-    case PoolSupervisor.start_child(socket.endpoint, socket.handler, from, args) do
-      {:ok, :undefined} ->
-        receive do: ({^ref, reply} -> {:error, reply})
+    case PoolSupervisor.start_child(socket.endpoint, socket.handler, from, child_spec) do
       {:ok, pid} ->
-        receive do: ({^ref, reply} -> {:ok, reply, pid})
+        mon_ref = Process.monitor(pid)
+
+        receive do
+          {^ref, {:ok, reply}} ->
+            Process.demonitor(mon_ref, [:flush])
+            {:ok, reply, pid}
+
+          {^ref, {:error, reply}} ->
+            Process.demonitor(mon_ref, [:flush])
+            {:error, reply}
+
+          {:DOWN, ^mon_ref, _, _, reason} ->
+            Logger.error(fn -> Exception.format_exit(reason) end)
+            {:error, %{reason: "join crashed"}}
+        end
+
       {:error, reason} ->
-        Logger.error fn -> Exception.format_exit(reason) end
+        Logger.error(fn -> Exception.format_exit(reason) end)
         {:error, %{reason: "join crashed"}}
     end
   end
@@ -53,7 +53,7 @@ defmodule Phoenix.Channel.Server do
 
   Used by channel tests.
   """
-  @spec socket(pid) :: Socket.t
+  @spec socket(pid) :: Socket.t()
   def socket(pid) do
     GenServer.call(pid, :socket)
   end
@@ -80,6 +80,55 @@ defmodule Phoenix.Channel.Server do
   ## Channel API
 
   @doc """
+  Hook invoked by Phoenix.PubSub dispatch.
+  """
+  def dispatch(subscribers, from, %Broadcast{event: event} = msg) do
+    Enum.reduce(subscribers, %{}, fn
+      {pid, _}, cache when pid == from ->
+        cache
+
+      {pid, {:fastlane, fastlane_pid, serializer, event_intercepts}}, cache ->
+        if event in event_intercepts do
+          send(pid, msg)
+          cache
+        else
+          case cache do
+            %{^serializer => encoded_msg} ->
+              send(fastlane_pid, encoded_msg)
+              cache
+
+            %{} ->
+              encoded_msg = serializer.fastlane!(msg)
+              send(fastlane_pid, encoded_msg)
+              Map.put(cache, serializer, encoded_msg)
+          end
+        end
+
+      {pid, _}, cache ->
+        send(pid, msg)
+        cache
+    end)
+
+    :ok
+  end
+
+  def dispatch(entries, :none, message) do
+    for {pid, _} <- entries do
+      send(pid, message)
+    end
+
+    :ok
+  end
+
+  def dispatch(entries, from, message) do
+    for {pid, _} <- entries, pid != from do
+      send(pid, message)
+    end
+
+    :ok
+  end
+
+  @doc """
   Broadcasts on the given pubsub server with the given
   `topic`, `event` and `payload`.
 
@@ -87,14 +136,13 @@ defmodule Phoenix.Channel.Server do
   """
   def broadcast(pubsub_server, topic, event, payload)
       when is_binary(topic) and is_binary(event) and is_map(payload) do
-    PubSub.broadcast pubsub_server, topic, %Broadcast{
+    broadcast = %Broadcast{
       topic: topic,
       event: event,
       payload: payload
     }
-  end
-  def broadcast(_, topic, event, payload) do
-    raise_invalid_message(topic, event, payload)
+
+    PubSub.broadcast(pubsub_server, topic, broadcast, __MODULE__)
   end
 
   @doc """
@@ -105,14 +153,13 @@ defmodule Phoenix.Channel.Server do
   """
   def broadcast!(pubsub_server, topic, event, payload)
       when is_binary(topic) and is_binary(event) and is_map(payload) do
-    PubSub.broadcast! pubsub_server, topic, %Broadcast{
+    broadcast = %Broadcast{
       topic: topic,
       event: event,
       payload: payload
     }
-  end
-  def broadcast!(_, topic, event, payload) do
-    raise_invalid_message(topic, event, payload)
+
+    PubSub.broadcast!(pubsub_server, topic, broadcast, __MODULE__)
   end
 
   @doc """
@@ -123,14 +170,13 @@ defmodule Phoenix.Channel.Server do
   """
   def broadcast_from(pubsub_server, from, topic, event, payload)
       when is_binary(topic) and is_binary(event) and is_map(payload) do
-    PubSub.broadcast_from pubsub_server, from, topic, %Broadcast{
+    broadcast = %Broadcast{
       topic: topic,
       event: event,
       payload: payload
     }
-  end
-  def broadcast_from(_, _from, topic, event, payload) do
-    raise_invalid_message(topic, event, payload)
+
+    PubSub.broadcast_from(pubsub_server, from, topic, broadcast, __MODULE__)
   end
 
   @doc """
@@ -141,14 +187,47 @@ defmodule Phoenix.Channel.Server do
   """
   def broadcast_from!(pubsub_server, from, topic, event, payload)
       when is_binary(topic) and is_binary(event) and is_map(payload) do
-    PubSub.broadcast_from! pubsub_server, from, topic, %Broadcast{
+    broadcast = %Broadcast{
       topic: topic,
       event: event,
       payload: payload
     }
+
+    PubSub.broadcast_from!(pubsub_server, from, topic, broadcast, __MODULE__)
   end
-  def broadcast_from!(_, _from, topic, event, payload) do
-    raise_invalid_message(topic, event, payload)
+
+  @doc """
+  Broadcasts on the given pubsub server with the given
+  `topic`, `event` and `payload`.
+
+  The message is encoded as `Phoenix.Socket.Broadcast`.
+  """
+  def local_broadcast(pubsub_server, topic, event, payload)
+      when is_binary(topic) and is_binary(event) and is_map(payload) do
+    broadcast = %Broadcast{
+      topic: topic,
+      event: event,
+      payload: payload
+    }
+
+    PubSub.local_broadcast(pubsub_server, topic, broadcast, __MODULE__)
+  end
+
+  @doc """
+  Broadcasts on the given pubsub server with the given
+  `from`, `topic`, `event` and `payload`.
+
+  The message is encoded as `Phoenix.Socket.Broadcast`.
+  """
+  def local_broadcast_from(pubsub_server, from, topic, event, payload)
+      when is_binary(topic) and is_binary(event) and is_map(payload) do
+    broadcast = %Broadcast{
+      topic: topic,
+      event: event,
+      payload: payload
+    }
+
+    PubSub.local_broadcast_from(pubsub_server, from, topic, broadcast, __MODULE__)
   end
 
   @doc """
@@ -158,11 +237,8 @@ defmodule Phoenix.Channel.Server do
   def push(pid, topic, event, payload, serializer)
       when is_binary(topic) and is_binary(event) and is_map(payload) do
     message = %Message{topic: topic, event: event, payload: payload}
-    send pid, serializer.encode!(message)
+    send(pid, serializer.encode!(message))
     :ok
-  end
-  def push(_, topic, event, payload, _) do
-    raise_invalid_message(topic, event, payload)
   end
 
   @doc """
@@ -171,83 +247,29 @@ defmodule Phoenix.Channel.Server do
   def reply(pid, join_ref, ref, topic, {status, payload}, serializer)
       when is_binary(topic) and is_map(payload) do
     reply = %Reply{topic: topic, join_ref: join_ref, ref: ref, status: status, payload: payload}
-    send pid, serializer.encode!(reply)
+    send(pid, serializer.encode!(reply))
     :ok
-  end
-  def reply(_, _, _, topic, {_status, payload}, _) do
-    raise_invalid_message(topic, "phx_reply", payload)
-  end
-
-  @spec raise_invalid_message(topic :: term, event :: term, payload :: term) :: no_return()
-  defp raise_invalid_message(topic, event, payload) do
-    raise ArgumentError, """
-    topic and event must be strings, message must be a map, got:
-
-      topic: #{inspect topic}
-      event: #{inspect event}
-      payload: #{inspect payload}
-
-    """
   end
 
   ## Callbacks
 
   @doc false
   def init({auth_payload, from, socket}) do
-    %{channel: channel, topic: topic, private: private} = socket
-
-    socket = %{socket
-               | channel_pid: self(),
-                 private: Map.merge(channel.__socket__(:private), private)}
-
-    case channel_join(socket, channel, topic, auth_payload) do
-      {:ok, socket} ->
-        init(socket, channel, topic, %{}, from)
-      {:ok, reply, socket} ->
-        init(socket, channel, topic, reply, from)
-      {:error, reply} ->
-        log_join socket, topic, fn -> "Replied #{topic} :error" end
-        GenServer.reply(from, reply)
-        :ignore
-      other ->
-        raise """
-        channel #{inspect socket.channel}.join/3 is expected to return one of:
-
-            {:ok, Socket.t} |
-            {:ok, reply :: map, Socket.t} |
-            {:error, reply :: map}
-
-        got #{inspect other}
-        """
-    end
+    # TODO: Use handle_continue when we support Erlang/OTP 21+.
+    send(self(), {:join, __MODULE__})
+    {:ok, {auth_payload, from, socket}}
   end
-
-  defp channel_join(socket, channel, topic, auth_payload) do
-    instrument = %{params: auth_payload, socket: socket}
-
-    Phoenix.Endpoint.instrument socket, :phoenix_channel_join, instrument, fn ->
-      channel.join(topic, auth_payload, socket)
-    end
-  end
-
-  defp init(socket, channel, topic, reply, from) do
-    %{transport_pid: transport_pid, serializer: serializer, pubsub_server: pubsub_server} = socket
-    Process.monitor(transport_pid)
-
-    fastlane = {transport_pid, serializer, channel.__intercepts__()}
-    PubSub.subscribe(pubsub_server, topic, link: true, fastlane: fastlane)
-
-    log_join socket, topic, fn -> "Replied #{topic} :ok" end
-    GenServer.reply(from, reply)
-    {:ok, %{socket | joined: true}}
-  end
-
-  defp log_join(%{private: %{log_join: false}}, _topic, _func), do: :noop
-  defp log_join(%{private: %{log_join: level}}, _topic, func), do: Logger.log(level, func)
 
   @doc false
   def handle_call(:socket, _from, socket) do
     {:reply, socket, socket}
+  end
+
+  @doc false
+  def handle_call(msg, from, socket) do
+    msg
+    |> socket.channel.handle_call(from, socket)
+    |> handle_result(:handle_call)
   end
 
   @doc false
@@ -256,22 +278,52 @@ defmodule Phoenix.Channel.Server do
   end
 
   @doc false
+  def handle_cast(msg, socket) do
+    msg
+    |> socket.channel.handle_cast(socket)
+    |> handle_result(:handle_cast)
+  end
+
+  @doc false
+  def handle_info({:join, __MODULE__}, {auth_payload, {pid, _} = from, socket}) do
+    %{channel: channel, topic: topic, private: private} = socket
+    Process.put(:"$callers", [pid])
+
+    socket = %{
+      socket
+      | channel_pid: self(),
+        private: Map.merge(channel.__socket__(:private), private)
+    }
+
+    start = System.monotonic_time()
+    {reply, state} = channel_join(channel, topic, auth_payload, socket)
+    duration = System.monotonic_time() - start
+    metadata = %{params: auth_payload, socket: socket, result: elem(reply, 0)}
+    :telemetry.execute([:phoenix, :channel_joined], %{duration: duration}, metadata)
+    GenServer.reply(from, reply)
+    state
+  end
+
   def handle_info(%Message{topic: topic, event: "phx_leave", ref: ref}, %{topic: topic} = socket) do
     handle_in({:stop, {:shutdown, :left}, :ok, put_in(socket.ref, ref)})
   end
 
-  def handle_info(%Message{topic: topic, event: event, payload: payload, ref: ref},
-                  %{topic: topic} = socket) do
-    Phoenix.Endpoint.instrument socket, :phoenix_channel_receive,
-      %{ref: ref, event: event, params: payload, socket: socket}, fn ->
-      event
-      |> socket.channel.handle_in(payload, put_in(socket.ref, ref))
-      |> handle_in()
-    end
+  def handle_info(
+        %Message{topic: topic, event: event, payload: payload, ref: ref},
+        %{topic: topic} = socket
+      ) do
+    start = System.monotonic_time()
+    result = socket.channel.handle_in(event, payload, put_in(socket.ref, ref))
+    duration = System.monotonic_time() - start
+    metadata = %{ref: ref, event: event, params: payload, socket: socket}
+    :telemetry.execute([:phoenix, :channel_handled_in], %{duration: duration}, metadata)
+    handle_in(result)
   end
 
-  def handle_info(%Broadcast{topic: topic, event: event, payload: payload},
-                  %Socket{topic: topic} = socket) do
+  def handle_info(
+        %Broadcast{topic: topic, event: event, payload: payload},
+        %Socket{topic: topic} = socket
+      ) do
     event
     |> socket.channel.handle_out(payload, socket)
     |> handle_result(:handle_out)
@@ -288,14 +340,7 @@ defmodule Phoenix.Channel.Server do
       |> socket.channel.handle_info(socket)
       |> handle_result(:handle_info)
     else
-      proc =
-        case Process.info(self(), :registered_name) do
-          {_, []}   -> self()
-          {_, name} -> name
-        end
-
-      :error_logger.warning_msg('~p ~p received unexpected message in handle_info/2: ~p~n',
-                                [__MODULE__, proc, msg])
+      warn_unexpected_msg(:handle_info, 2, msg)
       {:noreply, socket}
     end
   end
@@ -318,39 +363,44 @@ defmodule Phoenix.Channel.Server do
     end
   end
 
-  @doc false
-  def fastlane(subscribers, from, %Broadcast{event: event} = msg) do
-    Enum.reduce(subscribers, %{}, fn
-      {pid, _fastlanes}, cache when pid == from ->
-        cache
-
-      {pid, nil}, cache ->
-        send(pid, msg)
-        cache
-
-      {pid, {fastlane_pid, serializer, event_intercepts}}, cache ->
-        if event in event_intercepts do
-          send(pid, msg)
-          cache
-        else
-          case Map.fetch(cache, serializer) do
-            {:ok, encoded_msg} ->
-              send(fastlane_pid, encoded_msg)
-              cache
-            :error ->
-              encoded_msg = serializer.fastlane!(msg)
-              send(fastlane_pid, encoded_msg)
-              Map.put(cache, serializer, encoded_msg)
-          end
-        end
-    end)
+  def terminate(_reason, _socket) do
+    :ok
   end
 
-  def fastlane(subscribers, from, msg) do
-    Enum.each(subscribers, fn
-      {pid, _} when pid == from -> :noop
-      {pid, _} -> send(pid, msg)
-    end)
+  ## Joins
+
+  defp channel_join(channel, topic, auth_payload, socket) do
+    case channel.join(topic, auth_payload, socket) do
+      {:ok, socket} ->
+        {{:ok, %{}}, init_join(socket, channel, topic)}
+
+      {:ok, reply, socket} ->
+        {{:ok, reply}, init_join(socket, channel, topic)}
+
+      {:error, reply} ->
+        {{:error, reply}, {:stop, :shutdown, socket}}
+
+      other ->
+        raise """
+        channel #{inspect(socket.channel)}.join/3 is expected to return one of:
+
+            {:ok, Socket.t} |
+            {:ok, reply :: map, Socket.t} |
+            {:error, reply :: map}
+
+        got #{inspect(other)}
+        """
+    end
+  end
+
+  defp init_join(socket, channel, topic) do
+    %{transport_pid: transport_pid, serializer: serializer, pubsub_server: pubsub_server} = socket
+    Process.monitor(transport_pid)
+
+    fastlane = {:fastlane, transport_pid, serializer, channel.__intercepts__()}
+    PubSub.subscribe(pubsub_server, topic, metadata: fastlane)
+
+    {:noreply, %{socket | joined: true}}
   end
 
   ## Handle results
@@ -362,7 +412,17 @@ defmodule Phoenix.Channel.Server do
       {:shutdown, _} -> send_socket_close(socket, reason)
       _ -> :noop
     end
+
     {:stop, reason, socket}
+  end
+
+  defp handle_result({:reply, resp, socket}, :handle_call) do
+    {:reply, resp, socket}
+  end
+
+  defp handle_result({:noreply, socket}, callback)
+       when callback in [:handle_call, :handle_cast] do
+    {:noreply, socket}
   end
 
   defp handle_result({:noreply, socket}, _callback) do
@@ -385,7 +445,7 @@ defmodule Phoenix.Channel.Server do
         {:stop, reason :: term, {status :: atom, response :: map}, Socket.t} |
         {:stop, reason :: term, status :: atom, Socket.t}
 
-    got #{inspect result}
+    got #{inspect(result)}
     """
   end
 
@@ -397,7 +457,7 @@ defmodule Phoenix.Channel.Server do
         {:noreply, Socket.t, timeout | :hibernate} |
         {:stop, reason :: term, Socket.t} |
 
-    got #{inspect result}
+    got #{inspect(result)}
     """
   end
 
@@ -422,8 +482,14 @@ defmodule Phoenix.Channel.Server do
   end
 
   defp handle_reply(socket, {status, payload}) when is_atom(status) and is_map(payload) do
-    reply(socket.transport_pid, socket.join_ref, socket.ref, socket.topic, {status, payload},
-          socket.serializer)
+    reply(
+      socket.transport_pid,
+      socket.join_ref,
+      socket.ref,
+      socket.topic,
+      {status, payload},
+      socket.serializer
+    )
   end
 
   defp handle_reply(socket, status) when is_atom(status) do
@@ -443,7 +509,20 @@ defmodule Phoenix.Channel.Server do
         {:reply, {:ok, %{}}, socket}
         {:stop, :shutdown, {:error, %{}}, socket}
 
-    got #{inspect reply}
+    got #{inspect(reply)}
     """
+  end
+
+  defp warn_unexpected_msg(fun, arity, msg) do
+    proc =
+      case Process.info(self(), :registered_name) do
+        {_, []} -> self()
+        {_, name} -> name
+      end
+
+    :error_logger.warning_msg(
+      ~c"~p ~p received unexpected message in #{fun}/#{arity}: ~p~n",
+      [__MODULE__, proc, msg]
+    )
   end
 end

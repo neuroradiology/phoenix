@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title><%= app_module %> · Phoenix Framework</title>
     <link rel="stylesheet" href="<%%= Routes.static_path(@conn, "/css/app.css") %>"/>
+    <%%= csrf_meta_tag() %>
   </head>
   <body>
     <header>
@@ -15,7 +16,7 @@
             <li><a href="https://hexdocs.pm/phoenix/overview.html">Get Started</a></li>
           </ul>
         </nav>
-        <a href="http://phoenixframework.org/" class="phx-logo">
+        <a href="https://phoenixframework.org/" class="phx-logo">
           <img src="<%%= Routes.static_path(@conn, "/images/phoenix.png") %>" alt="Phoenix Framework Logo"/>
         </a>
       </section>

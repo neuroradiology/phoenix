@@ -402,6 +402,17 @@ defmodule Phoenix.Controller.ControllerTest do
              "world"
     end
 
+    test "sends file for download with custom :filename and :encode false" do
+      conn = send_download(conn(:get, "/"), {:file, @hello_txt}, filename: "dev's hello world.json", encode: false)
+      assert conn.status == 200
+      assert get_resp_header(conn, "content-disposition") ==
+             ["attachment; filename=\"dev's hello world.json\""]
+      assert get_resp_header(conn, "content-type") ==
+             ["application/json"]
+      assert conn.resp_body ==
+             "world"
+    end
+
     test "sends file for download with custom :content_type and :charset" do
       conn = send_download(conn(:get, "/"), {:file, @hello_txt}, content_type: "application/json", charset: "utf8")
       assert conn.status == 200
@@ -409,6 +420,15 @@ defmodule Phoenix.Controller.ControllerTest do
              ["attachment; filename=\"hello.txt\""]
       assert get_resp_header(conn, "content-type") ==
              ["application/json; charset=utf8"]
+      assert conn.resp_body ==
+             "world"
+    end
+
+    test "sends file for download with custom :disposition" do
+      conn = send_download(conn(:get, "/"), {:file, @hello_txt}, disposition: :inline)
+      assert conn.status == 200
+      assert get_resp_header(conn, "content-disposition") ==
+             ["inline; filename=\"hello.txt\""]
       assert conn.resp_body ==
              "world"
     end
@@ -448,6 +468,27 @@ defmodule Phoenix.Controller.ControllerTest do
              ["application/json; charset=utf8"]
       assert conn.resp_body ==
              "world"
+    end
+
+    test "sends binary for download with custom :disposition" do
+      conn = send_download(conn(:get, "/"), {:binary, "world"},
+                           filename: "hello.txt", disposition: :inline)
+      assert conn.status == 200
+      assert get_resp_header(conn, "content-disposition") ==
+             ["inline; filename=\"hello.txt\""]
+      assert conn.resp_body ==
+             "world"
+    end
+
+    test "raises ArgumentError for :disposition other than :attachment or :inline" do
+      assert_raise(ArgumentError, ~r"expected :disposition to be :attachment or :inline, got: :foo", fn ->
+        send_download(conn(:get, "/"), {:file, @hello_txt}, disposition: :foo)
+      end)
+
+      assert_raise(ArgumentError, ~r"expected :disposition to be :attachment or :inline, got: :foo", fn ->
+        send_download(conn(:get, "/"), {:binary, "world"},
+                           filename: "hello.txt", disposition: :foo)
+      end)
     end
   end
 
@@ -544,7 +585,7 @@ defmodule Phoenix.Controller.ControllerTest do
     assert Phoenix.Controller.__view__(MyApp.Admin.UserController) == MyApp.Admin.UserView
   end
 
-  test "__layout__ returns the layout modoule based on controller module" do
+  test "__layout__ returns the layout module based on controller module" do
     assert Phoenix.Controller.__layout__(UserController, []) ==
            LayoutView
     assert Phoenix.Controller.__layout__(MyApp.UserController, []) ==

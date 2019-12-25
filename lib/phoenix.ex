@@ -44,13 +44,14 @@ defmodule Phoenix do
       :erlang.system_flag(:backtrace_depth, stacktrace_depth)
     end
 
-    # Start the supervision tree
-    import Supervisor.Spec
+    if Application.fetch_env!(:phoenix, :logger) do
+      Phoenix.Logger.install()
+    end
 
     children = [
       # Code reloading must be serial across all Phoenix apps
-      worker(Phoenix.CodeReloader.Server, []),
-      supervisor(Phoenix.Transports.LongPoll.Supervisor, [])
+      Phoenix.CodeReloader.Server,
+      {DynamicSupervisor, name: Phoenix.Transports.LongPoll.Supervisor, strategy: :one_for_one}
     ]
 
     Supervisor.start_link(children, strategy: :one_for_one, name: Phoenix.Supervisor)
@@ -105,14 +106,14 @@ defmodule Phoenix do
         for Phoenix JSON encoding. We recommend everyone to upgrade to
         Jason by setting in your config/config.exs:
 
-            config :phoenix, :json_encoding, Jason
+            config :phoenix, :json_library, Jason
 
         And then adding {:jason, "~> 1.0"} as a dependency.
 
         If instead you would rather continue using Poison, then add to
         your config/config.exs:
 
-            config :phoenix, :json_encoding, Poison
+            config :phoenix, :json_library, Poison
         """
     end
   end

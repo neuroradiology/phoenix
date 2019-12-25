@@ -32,7 +32,7 @@ defmodule HelloWeb.Router do
   # end
 end
 ```
-The name you gave your application will appear instead of `Hello` for both the router module and controller name.
+Both the router and controller module names will be prefixed with the name you gave your application instead of `HelloWeb`.
 
 The first line of this module, `use HelloWeb, :router`, simply makes Phoenix router functions available in our particular router.
 
@@ -115,7 +115,7 @@ user_path  PATCH   /users/:id       HelloWeb.UserController :update
 user_path  DELETE  /users/:id       HelloWeb.UserController :delete
 ```
 
-Of course, the name of your project will replace `Hello`.
+Of course, the name of your project will replace `HelloWeb`.
 
 This is the standard matrix of HTTP verbs, paths, and controller actions. Let's look at them individually, in a slightly different order.
 
@@ -161,7 +161,7 @@ comment_path  PATCH  /comments/:id       HelloWeb.CommentController :update
               PUT    /comments/:id       HelloWeb.CommentController :update
 ```
 
-The `Phoenix.Router.resources/4` function describes additional options for customizing resource routes.
+The `Phoenix.Router.resources/4` macro describes additional options for customizing resource routes.
 
 ## Forward
 
@@ -181,7 +181,7 @@ defmodule HelloWeb.Router do
 end
 ```
 
-This means that all routes starting with `/jobs` will be sent to the `BackgroundJob.Plug` module.
+This means that all routes starting with `/jobs` will be sent to the `HelloWeb.BackgroundJob.Plug` module.
 
 We can even use the `forward/4` macro in a pipeline. If we wanted to ensure that the user was authenticated and an administrator in order to see the jobs page, we could use the following in our router.
 
@@ -214,16 +214,16 @@ Writing an actual background job worker is beyond the scope of this guide. Howev
 
 
 ```elixir
-defmodule BackgroundJob.Plug do
+defmodule HelloWeb.BackgroundJob.Plug do
   def init(opts), do: opts
   def call(conn, opts) do
     conn
     |> Plug.Conn.assign(:name, Keyword.get(opts, :name, "Background Job"))
-    |> BackgroundJob.Router.call(opts)
+    |> HelloWeb.BackgroundJob.Router.call(opts)
   end
 end
 
-defmodule BackgroundJob.Router do
+defmodule HelloWeb.BackgroundJob.Router do
   use Plug.Router
 
   plug :match
@@ -691,7 +691,7 @@ Endpoints organize all the plugs common to every request, and apply them before 
 
 - [Plug.RequestId](https://hexdocs.pm/plug/Plug.RequestId.html) - generates a unique request id for each request.
 
-- [Plug.Logger](https://hexdocs.pm/plug/Plug.Logger.html) - logs incoming requests
+- [Plug.Telemetry](https://hexdocs.pm/plug/Plug.Telemetry.html) - adds instrumentation points so Phoenix can log the request path, status code and request time by default.
 
 - [Plug.Parsers](https://hexdocs.pm/plug/Plug.Parsers.html) - parses the request body when a known parser is available. By default parsers parse urlencoded, multipart and json (with `jason`). The request body is left untouched when the request content-type cannot be parsed
 
