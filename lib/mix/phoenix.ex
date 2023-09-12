@@ -319,7 +319,11 @@ defmodule Mix.Phoenix do
   Prompts to continue if any files exist.
   """
   def prompt_for_conflicts(generator_files) do
-    file_paths = Enum.map(generator_files, fn {_, _, path} -> path end)
+    file_paths =
+      Enum.flat_map(generator_files, fn
+        {:new_eex, _, _path} -> []
+        {_kind, _, path} -> [path]
+      end)
 
     case Enum.filter(file_paths, &File.exists?(&1)) do
       [] -> :ok
@@ -327,7 +331,7 @@ defmodule Mix.Phoenix do
         Mix.shell().info"""
         The following files conflict with new files to be generated:
 
-        #{conflicts |> Enum.map(&"  * #{&1}") |> Enum.join("\n")}
+        #{Enum.map_join(conflicts, "\n", &"  * #{&1}")}
 
         See the --web option to namespace similarly named resources
         """
@@ -346,5 +350,13 @@ defmodule Mix.Phoenix do
     else
       Module.concat(["#{base}Web"])
     end
+  end
+
+  def to_text(data) do
+    inspect data, limit: :infinity, printable_limit: :infinity
+  end
+
+  def prepend_newline(string) do
+    "\n" <> string
   end
 end

@@ -4,7 +4,7 @@ defmodule Mix.Tasks.Phx.Gen.Context do
   @moduledoc """
   Generates a context with functions around an Ecto schema.
 
-      mix phx.gen.context Accounts User users name:string age:integer
+      $ mix phx.gen.context Accounts User users name:string age:integer
 
   The first argument is the context module followed by the schema module
   and its plural name (used as the schema table name).
@@ -40,7 +40,7 @@ defmodule Mix.Tasks.Phx.Gen.Context do
   the plural name provided for the resource. To customize this value,
   a `--table` option may be provided. For example:
 
-      mix phx.gen.context Accounts User users --table cms_users
+      $ mix phx.gen.context Accounts User users --table cms_users
 
   ## binary_id
 
@@ -63,6 +63,14 @@ defmodule Mix.Tasks.Phx.Gen.Context do
 
   Read the documentation for `phx.gen.schema` for more information on
   attributes.
+
+  ## Skipping prompts
+
+  This generator will prompt you if there is an existing context with the same
+  name, in order to provide more instructions on how to correctly use phoenix contexts.
+  You can skip this prompt and automatically merge the new schema access functions and tests into the
+  existing context using `--merge-with-existing-context`. To prevent changes to
+  the existing context and exit the generator, use `--no-merge-with-existing-context`.
   """
 
   use Mix.Task
@@ -71,14 +79,15 @@ defmodule Mix.Tasks.Phx.Gen.Context do
   alias Mix.Tasks.Phx.Gen
 
   @switches [binary_id: :boolean, table: :string, web: :string,
-             schema: :boolean, context: :boolean, context_app: :string]
+             schema: :boolean, context: :boolean, context_app: :string,
+             merge_with_existing_context: :boolean, prefix: :string, live: :boolean]
 
   @default_opts [schema: true, context: true]
 
   @doc false
   def run(args) do
     if Mix.Project.umbrella?() do
-      Mix.raise "mix phx.gen.context can only be run inside an application directory"
+      Mix.raise "mix phx.gen.context must be invoked from within your *_web application root directory"
     end
 
     {context, schema} = build(args)
@@ -100,11 +109,11 @@ defmodule Mix.Tasks.Phx.Gen.Context do
   end
 
   @doc false
-  def build(args) do
+  def build(args, help \\ __MODULE__) do
     {opts, parsed, _} = parse_opts(args)
-    [context_name, schema_name, plural | schema_args] = validate_args!(parsed)
+    [context_name, schema_name, plural | schema_args] = validate_args!(parsed, help)
     schema_module = inspect(Module.concat(context_name, schema_name))
-    schema = Gen.Schema.build([schema_module, plural | schema_args], opts, __MODULE__)
+    schema = Gen.Schema.build([schema_module, plural | schema_args], opts, help)
     context = Context.new(context_name, schema, opts)
     {context, schema}
   end
@@ -137,14 +146,20 @@ defmodule Mix.Tasks.Phx.Gen.Context do
     if schema.generate?, do: Gen.Schema.copy_new_files(schema, paths, binding)
     inject_schema_access(context, paths, binding)
     inject_tests(context, paths, binding)
+    inject_test_fixture(context, paths, binding)
 
     context
   end
 
-  defp inject_schema_access(%Context{file: file} = context, paths, binding) do
+  @doc false
+  def ensure_context_file_exists(%Context{file: file} = context, paths, binding) do
     unless Context.pre_existing?(context) do
       Mix.Generator.create_file(file, Mix.Phoenix.eval_from(paths, "priv/templates/phx.gen.context/context.ex", binding))
     end
+  end
+
+  defp inject_schema_access(%Context{file: file} = context, paths, binding) do
+    ensure_context_file_exists(context, paths, binding)
 
     paths
     |> Mix.Phoenix.eval_from("priv/templates/phx.gen.context/#{schema_access_template(context)}", binding)
@@ -155,14 +170,79 @@ defmodule Mix.Tasks.Phx.Gen.Context do
     File.write!(file, content)
   end
 
-  defp inject_tests(%Context{test_file: test_file} = context, paths, binding) do
+  @doc false
+  def ensure_test_file_exists(%Context{test_file: test_file} = context, paths, binding) do
     unless Context.pre_existing_tests?(context) do
       Mix.Generator.create_file(test_file, Mix.Phoenix.eval_from(paths, "priv/templates/phx.gen.context/context_test.exs", binding))
     end
+  end
+
+  defp inject_tests(%Context{test_file: test_file} = context, paths, binding) do
+    ensure_test_file_exists(context, paths, binding)
 
     paths
     |> Mix.Phoenix.eval_from("priv/templates/phx.gen.context/test_cases.exs", binding)
     |> inject_eex_before_final_end(test_file, binding)
+  end
+
+  @doc false
+  def ensure_test_fixtures_file_exists(%Context{test_fixtures_file: test_fixtures_file} = context, paths, binding) do
+    unless Context.pre_existing_test_fixtures?(context) do
+      Mix.Generator.create_file(test_fixtures_file, Mix.Phoenix.eval_from(paths, "priv/templates/phx.gen.context/fixtures_module.ex", binding))
+    end
+  end
+
+  defp inject_test_fixture(%Context{test_fixtures_file: test_fixtures_file} = context, paths, binding) do
+    ensure_test_fixtures_file_exists(context, paths, binding)
+
+    paths
+    |> Mix.Phoenix.eval_from("priv/templates/phx.gen.context/fixtures.ex", binding)
+    |> Mix.Phoenix.prepend_newline()
+    |> inject_eex_before_final_end(test_fixtures_file, binding)
+
+    maybe_print_unimplemented_fixture_functions(context)
+  end
+
+  defp maybe_print_unimplemented_fixture_functions(%Context{} = context) do
+    fixture_functions_needing_implementations =
+      Enum.flat_map(
+        context.schema.fixture_unique_functions,
+        fn
+          {_field, {_function_name, function_def, true}} -> [function_def]
+          {_field, {_function_name, _function_def, false}} -> []
+        end
+      )
+
+    if Enum.any?(fixture_functions_needing_implementations) do
+      Mix.shell.info(
+        """
+
+        Some of the generated database columns are unique. Please provide
+        unique implementations for the following fixture function(s) in
+        #{context.test_fixtures_file}:
+
+        #{
+          fixture_functions_needing_implementations
+          |> Enum.map_join(&indent(&1, 2))
+          |> String.trim_trailing()
+        }
+        """
+      )
+    end
+  end
+
+  defp indent(string, spaces) do
+    indent_string = String.duplicate(" ", spaces)
+
+    string
+    |> String.split("\n")
+    |> Enum.map_join(fn line ->
+        if String.trim(line) == "" do
+          "\n"
+        else
+          indent_string <> line <> "\n"
+        end
+    end)
   end
 
   defp inject_eex_before_final_end(content_to_inject, file_path, binding) do
@@ -200,40 +280,40 @@ defmodule Mix.Tasks.Phx.Gen.Context do
     end
   end
 
-  defp validate_args!([context, schema, _plural | _] = args) do
+  defp validate_args!([context, schema, _plural | _] = args, help) do
     cond do
       not Context.valid?(context) ->
-        raise_with_help "Expected the context, #{inspect context}, to be a valid module name"
+        help.raise_with_help "Expected the context, #{inspect context}, to be a valid module name"
       not Schema.valid?(schema) ->
-        raise_with_help "Expected the schema, #{inspect schema}, to be a valid module name"
+        help.raise_with_help "Expected the schema, #{inspect schema}, to be a valid module name"
       context == schema ->
-        raise_with_help "The context and schema should have different names"
+        help.raise_with_help "The context and schema should have different names"
       context == Mix.Phoenix.base() ->
-        raise_with_help "Cannot generate context #{context} because it has the same name as the application"
+        help.raise_with_help "Cannot generate context #{context} because it has the same name as the application"
       schema == Mix.Phoenix.base() ->
-        raise_with_help "Cannot generate schema #{schema} because it has the same name as the application"
+        help.raise_with_help "Cannot generate schema #{schema} because it has the same name as the application"
       true ->
         args
     end
   end
 
-  defp validate_args!(_) do
-    raise_with_help "Invalid arguments"
+  defp validate_args!(_, help) do
+    help.raise_with_help "Invalid arguments"
   end
 
   @doc false
-  @spec raise_with_help(String.t) :: no_return()
   def raise_with_help(msg) do
     Mix.raise """
     #{msg}
 
-    mix phx.gen.html, phx.gen.json and phx.gen.context expect a
-    context module name, followed by singular and plural names of
-    the generated resource, ending with any number of attributes.
+    mix phx.gen.html, phx.gen.json, phx.gen.live, and phx.gen.context
+    expect a context module name, followed by singular and plural names
+    of the generated resource, ending with any number of attributes.
     For example:
 
         mix phx.gen.html Accounts User users name:string
         mix phx.gen.json Accounts User users name:string
+        mix phx.gen.live Accounts User users name:string
         mix phx.gen.context Accounts User users name:string
 
     The context serves as the API boundary for the given resource.
@@ -242,16 +322,24 @@ defmodule Mix.Tasks.Phx.Gen.Context do
     """
   end
 
+  @doc false
+  def prompt_for_code_injection(%Context{generate?: false}), do: :ok
   def prompt_for_code_injection(%Context{} = context) do
-    if Context.pre_existing?(context) do
+    if Context.pre_existing?(context) && !merge_with_existing_context?(context) do
+      System.halt()
+    end
+  end
+
+  defp merge_with_existing_context?(%Context{} = context) do
+    Keyword.get_lazy(context.opts, :merge_with_existing_context, fn ->
       function_count = Context.function_count(context)
       file_count = Context.file_count(context)
 
-      Mix.shell().info """
+      Mix.shell().info("""
       You are generating into an existing context.
 
-      The #{inspect context.module} context currently has #{function_count} functions and \
-      #{file_count} files in its directory.
+      The #{inspect(context.module)} context currently has #{singularize(function_count, "functions")} and \
+      #{singularize(file_count, "files")} in its directory.
 
         * It's OK to have multiple resources in the same context as \
       long as they are closely related. But if a context grows too \
@@ -263,10 +351,12 @@ defmodule Mix.Tasks.Phx.Gen.Context do
       to the same context.
 
       If you are not sure, prefer creating a new context over adding to the existing one.
-      """
-      unless Mix.shell().yes?("Would you like to proceed?") do
-        System.halt()
-      end
-    end
+      """)
+
+      Mix.shell().yes?("Would you like to proceed?")
+    end)
   end
+
+  defp singularize(1, plural), do: "1 " <> String.trim_trailing(plural, "s")
+  defp singularize(amount, plural), do: "#{amount} #{plural}"
 end

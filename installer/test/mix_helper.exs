@@ -2,12 +2,6 @@
 # process to avoid polluting tests.
 Mix.shell(Mix.Shell.Process)
 
-# Mock live reloading for testing the generated application.
-defmodule Phoenix.LiveReloader do
-  def init(opts), do: opts
-  def call(conn, _), do: conn
-end
-
 defmodule MixHelper do
   import ExUnit.Assertions
   import ExUnit.CaptureIO
@@ -41,6 +35,12 @@ defmodule MixHelper do
       File.mkdir_p!(path)
       File.cd!(path, fn ->
         File.touch!("mix.exs")
+        File.write!(".formatter.exs", """
+        [
+          import_deps: [:phoenix, :ecto, :ecto_sql],
+          inputs: ["*.exs"]
+        ]
+        """)
         function.()
       end)
     after
@@ -61,8 +61,8 @@ defmodule MixHelper do
       File.mkdir_p!(apps_path)
       File.mkdir_p!(config_path)
       File.touch!(Path.join(path, "mix.exs"))
-      for file <- ~w(config.exs dev.exs test.exs prod.exs prod.secret.exs) do
-        File.write!(Path.join(config_path, file), "use Mix.Config\n")
+      for file <- ~w(config.exs dev.exs test.exs prod.exs) do
+        File.write!(Path.join(config_path, file), "import Config\n")
       end
       File.cd!(apps_path, function)
     after
@@ -95,7 +95,7 @@ defmodule MixHelper do
     cond do
       is_list(match) ->
         assert_file file, &(Enum.each(match, fn(m) -> assert &1 =~ m end))
-      is_binary(match) or Regex.regex?(match) ->
+      is_binary(match) or is_struct(match, Regex) ->
         assert_file file, &(assert &1 =~ match)
       is_function(match, 1) ->
         assert_file(file)
@@ -104,12 +104,27 @@ defmodule MixHelper do
     end
   end
 
-  def with_generator_env(new_env, fun) do
-    Application.put_env(:phoenix, :generators, new_env)
+  def modify_file(path, function) when is_binary(path) and is_function(function, 1) do
+    path
+    |> File.read!()
+    |> function.()
+    |> write_file!(path)
+  end
+
+  defp write_file!(content, path) do
+    File.write!(path, content)
+  end
+
+  def with_generator_env(app_name \\ :phoenix, new_env, fun) do
+    config_before = Application.fetch_env(app_name, :generators)
+    Application.put_env(app_name, :generators, new_env)
     try do
       fun.()
     after
-      Application.delete_env(:phoenix, :generators)
+      case config_before do
+        {:ok, config} -> Application.put_env(app_name, :generators, config)
+        :error -> Application.delete_env(app_name, :generators)
+      end
     end
   end
 

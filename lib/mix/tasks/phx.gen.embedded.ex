@@ -34,7 +34,7 @@ defmodule Mix.Tasks.Phx.Gen.Embedded do
   @doc false
   def run(args) do
     if Mix.Project.umbrella?() do
-      Mix.raise "mix phx.gen.embedded can only be run inside an application directory"
+      Mix.raise "mix phx.gen.embedded must be invoked from within your *_web application root directory"
     end
 
     schema = build(args)
@@ -62,11 +62,10 @@ defmodule Mix.Tasks.Phx.Gen.Embedded do
 
   @doc false
   def validate_args!([schema | _] = args) do
-    cond do
-      not Schema.valid?(schema) ->
-        raise_with_help "Expected the schema argument, #{inspect schema}, to be a valid module name"
-      true ->
-        args
+    if Schema.valid?(schema) do
+      args
+    else
+      raise_with_help "Expected the schema argument, #{inspect schema}, to be a valid module name"
     end
   end
   def validate_args!(_) do

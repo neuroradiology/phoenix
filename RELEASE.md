@@ -1,21 +1,25 @@
 # Release Instructions
 
   1. Check related deps for required version bumps and compatibility (`phoenix_ecto`, `phoenix_pubsub_redis`, `phoenix_html`)
-  2. Update `phoenix_dep` in `installer/lib/phx_new/generator.ex` to release
-  3. Bump version in related files below
-  4. Run tests, commit, push code
-  5. Publish `phx_new` and `phoenix` packages and docs after pruning any extraneous uncommitted files
-  6. Test installer by generating a new app, running `mix deps.get`, and compiling
-  7. Publish to `npm` with `npm publish`
-  8. Start -dev version in related files below
-  9. Update `phoenix_dep` in `installer/lib/phx_new/generator.ex` back to git
+  2. Bump version in related files below
+  3. Bump external dependency version in related external files below
+  4. Run tests:
+      - `mix test` in the root folder
+      - `mix test` in the `installer/` folder
+  5. Commit, push code
+  6. Publish `phx_new` and `phoenix` packages and docs after pruning any extraneous uncommitted files
+  7. Test installer by generating a new app, running `mix deps.get`, and compiling
+  8. Publish to `npm` with `npm publish`
+  9. Start -dev version in related files below
 
 ## Files with version
 
   * `CHANGELOG`
   * `mix.exs`
   * `installer/mix.exs`
-  * `installer/README.md`
   * `package.json`
   * `assets/package.json`
-  * `guides/introduction/installation.md`
+
+## Files with external dependency versions
+  * `priv/templates/phx.gen.release/Docker.eex` (debian)
+  * `priv/templates/phx.gen.release/Docker.eex` (esbuild)

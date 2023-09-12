@@ -8,8 +8,8 @@ defmodule Mix.Tasks.Phx.Digest do
   @moduledoc """
   Digests and compresses static files.
 
-      mix phx.digest
-      mix phx.digest priv/static -o /www/public
+      $ mix phx.digest
+      $ mix phx.digest priv/static -o /www/public
 
   The first argument is the path where the static files are located. The
   `-o` option indicates the path that will be used to save the digested and
@@ -33,18 +33,30 @@ defmodule Mix.Tasks.Phx.Digest do
     * app-eb0a5b9302e8d32828d8a73f137cc8f0.js.gz
     * cache_manifest.json
 
+  You can use `mix phx.digest.clean` to prune stale versions of the assets.
+  If you want to remove all produced files, run `mix phx.digest.clean --all`.
+
+  ## vsn
+
+  It is possible to digest the stylesheet asset references without the query
+  string "?vsn=d" with the option `--no-vsn`.
   """
+
+  @default_opts [vsn: true]
+  @switches [output: :string, vsn: :boolean]
 
   @doc false
   def run(all_args) do
-    {opts, args, _} = OptionParser.parse(all_args, switches: [output: :string], aliases: [o: :output])
-    input_path = List.first(args) || @default_input_path
-    output_path = opts[:output] || input_path
-
-    Mix.Task.run "deps.loadpaths", all_args
+    # Ensure all compressors are compiled.
+    Mix.Task.run "compile", all_args
     {:ok, _} = Application.ensure_all_started(:phoenix)
 
-    case Phoenix.Digester.compile(input_path, output_path) do
+    {opts, args, _} = OptionParser.parse(all_args, switches: @switches, aliases: [o: :output])
+    input_path = List.first(args) || @default_input_path
+    output_path = opts[:output] || input_path
+    with_vsn? = Keyword.merge(@default_opts, opts)[:vsn]
+
+    case Phoenix.Digester.compile(input_path, output_path, with_vsn?) do
       :ok ->
         # We need to call build structure so everything we have
         # generated into priv is copied to _build in case we have
@@ -52,7 +64,10 @@ defmodule Mix.Tasks.Phx.Digest do
         # build structure is mostly a no-op, so we are fine.
         Mix.Project.build_structure()
         Mix.shell().info [:green, "Check your digested files at #{inspect output_path}"]
+
       {:error, :invalid_path} ->
+        # Do not exit with status code on purpose because
+        # in an umbrella not all apps are digestable.
         Mix.shell().error "The input path #{inspect input_path} does not exist"
     end
   end

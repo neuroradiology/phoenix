@@ -172,7 +172,7 @@ defmodule Phoenix.Test.ChannelTest do
 
   @endpoint Endpoint
   @moduletag :capture_log
-  use Phoenix.ChannelTest
+  import Phoenix.ChannelTest
 
   setup_all do
     start_supervised! @endpoint
@@ -187,27 +187,41 @@ defmodule Phoenix.Test.ChannelTest do
   ## socket
 
   test "socket/1" do
-    assert socket(UserSocket) == %Socket{
+    assert %Socket{
              endpoint: @endpoint,
              handler: UserSocket,
              pubsub_server: Phoenix.Test.ChannelTest.PubSub,
-             transport: :channel_test,
-             transport_pid: self(),
              serializer: Phoenix.ChannelTest.NoopSerializer
-           }
+           } = socket(UserSocket)
   end
 
-  test "socket/2" do
-    assert socket(UserSocket, "user:id", %{hello: :world}) == %Socket{
+  test "socket/3" do
+    assert %Socket{
              id: "user:id",
              assigns: %{hello: :world},
              endpoint: @endpoint,
              pubsub_server: Phoenix.Test.ChannelTest.PubSub,
-             transport: :channel_test,
-             transport_pid: self(),
              serializer: Phoenix.ChannelTest.NoopSerializer,
              handler: UserSocket
-           }
+           } = socket(UserSocket, "user:id", %{hello: :world})
+  end
+
+  test "socket/4" do
+    pid = self()
+
+    task =
+      Task.async(fn ->
+        assert %Socket{
+                 id: "user:id",
+                 assigns: %{hello: :world},
+                 endpoint: @endpoint,
+                 pubsub_server: Phoenix.Test.ChannelTest.PubSub,
+                 serializer: Phoenix.ChannelTest.NoopSerializer,
+                 handler: UserSocket
+               } = socket(UserSocket, "user:id", %{hello: :world}, test_process: pid)
+      end)
+
+    Task.await(task)
   end
 
   ## join
@@ -220,7 +234,7 @@ defmodule Phoenix.Test.ChannelTest do
     assert socket.endpoint == @endpoint
     assert socket.pubsub_server == Phoenix.Test.ChannelTest.PubSub
     assert socket.topic == "foo:socket"
-    assert socket.transport == :channel_test
+    assert {Phoenix.ChannelTest, _} = socket.transport
     assert socket.transport_pid == self()
     assert socket.serializer == Phoenix.ChannelTest.NoopSerializer
     assert socket.assigns == %{hello: :world, original: :assign}
@@ -231,6 +245,18 @@ defmodule Phoenix.Test.ChannelTest do
 
     {:dictionary, dictionary} = Process.info(client.channel_pid, :dictionary)
     assert dictionary[:"$callers"] == [self()]
+  end
+
+  test "join/3 from another process" do
+    socket = socket(UserSocket, "id", original: :assign)
+
+    assert {:ok, socket, client} =
+             Task.async(fn ->
+               join(socket, Channel, "foo:socket")
+              end)
+              |> Task.await()
+
+    assert %{socket | joined: true} == client
   end
 
   test "join/3 with error reply" do
@@ -333,6 +359,21 @@ defmodule Phoenix.Test.ChannelTest do
     assert_broadcast "broadcast", %{"foo" => "bar"}
   end
 
+  test "connects and joins topics directly, from another process" do
+    pid = self()
+
+    task =
+      Task.async(fn ->
+        {:ok, socket} = connect(UserSocket, %{}, test_process: pid)
+        socket = subscribe_and_join!(socket, "foo:ok")
+        push(socket, "broadcast", %{"foo" => "bar"})
+        assert socket.id == "123"
+        assert_broadcast "broadcast", %{"foo" => "bar"}
+      end)
+
+    Task.await(task)
+  end
+
   test "pushes atom parameter keys as strings" do
     {:ok, _, socket} = join(socket(UserSocket), Channel, "foo:ok")
 
@@ -358,6 +399,25 @@ defmodule Phoenix.Test.ChannelTest do
     socket = subscribe_and_join!(socket(UserSocket), Channel, "foo:ok")
     broadcast_from!(socket, "default", %{"foo" => "bar"})
     assert_push "default", %{"foo" => "bar"}
+  end
+
+  test "push broadcasts by default, outside of test process" do
+    pid = self()
+
+    task =
+      Task.async(fn ->
+        socket =
+          subscribe_and_join!(
+            socket(UserSocket, "user_id", %{some: :assign}, test_process: pid),
+            Channel,
+            "foo:ok"
+          )
+
+        broadcast_from!(socket, "default", %{"foo" => "bar"})
+        assert_push "default", %{"foo" => "bar"}
+      end)
+
+    Task.await(task)
   end
 
   test "handles broadcasts and stops" do

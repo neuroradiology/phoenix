@@ -27,7 +27,7 @@ defmodule Phoenix.Integration.LongPollSocketTest do
 
     def child_spec(opts) do
       :value = Keyword.fetch!(opts, :custom)
-      Supervisor.child_spec({Task, fn -> :ok end}, [])
+      :ignore
     end
 
     def connect(map) do
@@ -116,7 +116,6 @@ defmodule Phoenix.Integration.LongPollSocketTest do
     assert resp.body["messages"] == [~s(%{"hello" => "world"})]
   end
 
-  @tag :cowboy2
   test "allows a path with variables" do
     path = "custom/123/456/path"
     resp = poll(:get, path, %{"key" => "value"}, nil)

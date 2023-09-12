@@ -1,8 +1,8 @@
 defmodule Mix.Tasks.Phx.Gen.Json do
-  @shortdoc "Generates controller, views, and context for a JSON resource"
+  @shortdoc "Generates context and controller for a JSON resource"
 
   @moduledoc """
-  Generates controller, views, and context for a JSON resource.
+  Generates controller, JSON view, and context for a JSON resource.
 
       mix phx.gen.json Accounts User users name:string age:integer
 
@@ -18,19 +18,31 @@ defmodule Mix.Tasks.Phx.Gen.Json do
   > over distinct contexts (such as `Accounts.User` and `Payments.User`).
 
   The schema is responsible for mapping the database fields into an
-  Elixir struct.
+  Elixir struct. It is followed by an optional list of attributes,
+  with their respective names and types. See `mix phx.gen.schema`
+  for more information on attributes.
 
   Overall, this generator will add the following files to `lib/`:
 
     * a context module in `lib/app/accounts.ex` for the accounts API
     * a schema in `lib/app/accounts/user.ex`, with an `users` table
-    * a view in `lib/app_web/views/user_view.ex`
     * a controller in `lib/app_web/controllers/user_controller.ex`
+    * a JSON view collocated with the controller in `lib/app_web/controllers/user_json.ex`
 
   A migration file for the repository and test files for the context and
   controller features will also be generated.
 
-  The location of the web files (controllers, views, templates, etc) in an
+  ## API Prefix
+
+  By default, the prefix "/api" will be generated for API route paths.
+  This can be customized via the `:api_prefix` generators configuration:
+
+      config :your_app, :generators,
+        api_prefix: "/api/v1"
+
+  ## The context app
+
+  The location of the web files (controllers, json views, etc) in an
   umbrella application will vary based on the `:context_app` config located
   in your applications `:generators` configuration. When set, the Phoenix
   generators will generate web files directly in your lib and test folders
@@ -48,51 +60,25 @@ defmodule Mix.Tasks.Phx.Gen.Json do
 
   ## Web namespace
 
-  By default, the controller and view will be namespaced by the schema name.
+  By default, the controller and json view will be namespaced by the schema name.
   You can customize the web module namespace by passing the `--web` flag with a
   module name, for example:
 
       mix phx.gen.json Sales User users --web Sales
 
   Which would generate a `lib/app_web/controllers/sales/user_controller.ex` and
-  `lib/app_web/views/sales/user_view.ex`.
+  `lib/app_web/controller/sales/user_json.ex`.
 
-  ## Generating without a schema or context file
+  ## Customizing the context, schema, tables and migrations
 
-  In some cases, you may wish to bootstrap JSON views, controllers, and
-  controller tests, but leave internal implementation of the context or schema
-  to yourself. You can use the `--no-context` and `--no-schema` flags for
-  file generation control.
+  In some cases, you may wish to bootstrap JSON views, controllers,
+  and controller tests, but leave internal implementation of the context
+  or schema to yourself. You can use the `--no-context` and `--no-schema`
+  flags for file generation control.
 
-  ## table
-
-  By default, the table name for the migration and schema will be
-  the plural name provided for the resource. To customize this value,
-  a `--table` option may be provided. For example:
-
-      mix phx.gen.json Accounts User users --table cms_users
-
-  ## binary_id
-
-  Generated migration can use `binary_id` for schema's primary key
-  and its references with option `--binary-id`.
-
-  ## Default options
-
-  This generator uses default options provided in the `:generators`
-  configuration of your application. These are the defaults:
-
-      config :your_app, :generators,
-        migration: true,
-        binary_id: false,
-        sample_binary_id: "11111111-1111-1111-1111-111111111111"
-
-  You can override those options per invocation by providing corresponding
-  switches, e.g. `--no-binary-id` to use normal ids despite the default
-  configuration or `--migration` to force generation of the migration.
-
-  Read the documentation for `phx.gen.schema` for more information on
-  attributes.
+  You can also change the table name or configure the migrations to
+  use binary ids for primary keys, see `mix phx.gen.schema` for more
+  information.
   """
 
   use Mix.Task
@@ -103,13 +89,21 @@ defmodule Mix.Tasks.Phx.Gen.Json do
   @doc false
   def run(args) do
     if Mix.Project.umbrella?() do
-      Mix.raise "mix phx.gen.json can only be run inside an application directory"
+      Mix.raise(
+        "mix phx.gen.json must be invoked from within your *_web application root directory"
+      )
     end
 
     {context, schema} = Gen.Context.build(args)
     Gen.Context.prompt_for_code_injection(context)
 
-    binding = [context: context, schema: schema]
+    binding = [
+      context: context,
+      schema: schema,
+      core_components?: Code.ensure_loaded?(Module.concat(context.web_module, "CoreComponents")),
+      gettext?: Code.ensure_loaded?(Module.concat(context.web_module, "Gettext"))
+    ]
+
     paths = Mix.Phoenix.generator_paths()
 
     prompt_for_conflicts(context)
@@ -125,32 +119,37 @@ defmodule Mix.Tasks.Phx.Gen.Json do
     |> Kernel.++(context_files(context))
     |> Mix.Phoenix.prompt_for_conflicts()
   end
+
   defp context_files(%Context{generate?: true} = context) do
     Gen.Context.files_to_be_generated(context)
   end
+
   defp context_files(%Context{generate?: false}) do
     []
   end
 
   @doc false
   def files_to_be_generated(%Context{schema: schema, context_app: context_app}) do
-    web_prefix = Mix.Phoenix.web_path(context_app)
+    singular = schema.singular
+    web = Mix.Phoenix.web_path(context_app)
     test_prefix = Mix.Phoenix.web_test_path(context_app)
     web_path = to_string(schema.web_path)
+    controller_pre = Path.join([web, "controllers", web_path])
+    test_pre = Path.join([test_prefix, "controllers", web_path])
 
     [
-      {:eex,     "controller.ex",          Path.join([web_prefix, "controllers", web_path, "#{schema.singular}_controller.ex"])},
-      {:eex,     "view.ex",                Path.join([web_prefix, "views", web_path, "#{schema.singular}_view.ex"])},
-      {:eex,     "controller_test.exs",    Path.join([test_prefix, "controllers", web_path, "#{schema.singular}_controller_test.exs"])},
-      {:new_eex, "changeset_view.ex",      Path.join([web_prefix, "views/changeset_view.ex"])},
-      {:new_eex, "fallback_controller.ex", Path.join([web_prefix, "controllers/fallback_controller.ex"])},
+      {:eex, "controller.ex", Path.join([controller_pre, "#{singular}_controller.ex"])},
+      {:eex, "json.ex", Path.join([controller_pre, "#{singular}_json.ex"])},
+      {:new_eex, "changeset_json.ex", Path.join([web, "controllers/changeset_json.ex"])},
+      {:eex, "controller_test.exs", Path.join([test_pre, "#{singular}_controller_test.exs"])},
+      {:new_eex, "fallback_controller.ex", Path.join([web, "controllers/fallback_controller.ex"])}
     ]
   end
 
   @doc false
   def copy_new_files(%Context{} = context, paths, binding) do
     files = files_to_be_generated(context)
-    Mix.Phoenix.copy_from paths, "priv/templates/phx.gen.json", binding, files
+    Mix.Phoenix.copy_from(paths, "priv/templates/phx.gen.json", binding, files)
     if context.generate?, do: Gen.Context.copy_new_files(context, paths, binding)
 
     context
@@ -159,24 +158,25 @@ defmodule Mix.Tasks.Phx.Gen.Json do
   @doc false
   def print_shell_instructions(%Context{schema: schema, context_app: ctx_app} = context) do
     if schema.web_namespace do
-      Mix.shell().info """
+      Mix.shell().info("""
 
       Add the resource to your #{schema.web_namespace} :api scope in #{Mix.Phoenix.web_path(ctx_app)}/router.ex:
 
-          scope "/#{schema.web_path}", #{inspect Module.concat(context.web_module, schema.web_namespace)} do
+          scope "/#{schema.web_path}", #{inspect(Module.concat(context.web_module, schema.web_namespace))}, as: :#{schema.web_path} do
             pipe_through :api
             ...
-            resources "/#{schema.plural}", #{inspect schema.alias}Controller
+            resources "/#{schema.plural}", #{inspect(schema.alias)}Controller
           end
-      """
+      """)
     else
-      Mix.shell().info """
+      Mix.shell().info("""
 
       Add the resource to your :api scope in #{Mix.Phoenix.web_path(ctx_app)}/router.ex:
 
-          resources "/#{schema.plural}", #{inspect schema.alias}Controller, except: [:new, :edit]
-      """
+          resources "/#{schema.plural}", #{inspect(schema.alias)}Controller, except: [:new, :edit]
+      """)
     end
+
     if context.generate?, do: Gen.Context.print_shell_instructions(context)
   end
 end

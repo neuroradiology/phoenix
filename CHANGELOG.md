@@ -1,37 +1,152 @@
-# Changelog for v1.5
+# Changelog for v1.7
 
-## Phoenix.PubSub 2.0 released
+See the [upgrade guide](https://gist.github.com/chrismccord/00a6ea2a96bc57df0cce526bd20af8a7) to upgrade from Phoenix 1.6.x.
 
-Phoenix.PubSub 2.0 has been released with a more flexible and powerful fastlane mechanism. We use this opportunity to also move Phoenix.PubSub out of the endpoint and explicitly into your supervision tree. To update, you will need to remove or update the `{:phoenix_pubsub, "~> 1.x"}` entry in your `mix.exs` to at least "2.0".
+Phoenix v1.7 requires Elixir v1.11+.
 
-Then once you start an application, you will get a warning about the `:pubsub` key in your endpoint being deprecated. Follow the steps in the warning and you are good to go!
+## Introduction of Verified Routes
 
-## 1.5.0-dev
+Phoenix 1.7 includes a new `Phoenix.VerifiedRoutes` feature which provides `~p`
+for route generation with compile-time verification.
 
-### Enhancements
+Use of the `sigil_p` macro allows paths and URLs throughout your
+application to be compile-time verified against your Phoenix router(s).
+For example the following path and URL usages:
 
-  * [Channel] Do not block the channel supervisor on join
-  * [Controller] Support `:disposition` option in `send_download/3`
-  * [Controller] Allow filename encoding to be disabled in `send_download/3`
-  * [Endpoint] Allow named params to be used when defining socket paths
-  * [Generator] Allow a custom migration module to be given to the migration generator
-  * [PubSub] Migrate to PubSub 2.0 with a more flexible fastlaning mechanism
-  * [Testing] Allow a custom list of headers for recycling to be given to `recycle/2`
+    <.link href={~p"/sessions/new"} method="post">Sign in</.link>
+
+    redirect(to: url(~p"/posts/#{post}"))
+
+Will be verified against your standard `Phoenix.Router` definitions:
+
+    get "/posts/:post_id", PostController, :show
+    post "/sessions/new", SessionController, :create
+
+Unmatched routes will issue compiler warnings:
+
+    warning: no route path for AppWeb.Router matches "/postz/#{post}"
+      lib/app_web/controllers/post_controller.ex:100: AppWeb.PostController.show/2
+
+*Note: Elixir v1.14+ is required for comprehensive warnings. Older versions
+will work properly and warn on new compilations, but changes to the router file
+will not issue new warnings.*
+
+This feature replaces the `Helpers` module generated in your Phoenix router, but helpers
+will continue to work and be generated. You can disable router helpers by passing the
+`helpers: false` option to `use Phoenix.Router`.
+
+## phx.new revamp
+
+The `phx.new` application generator has been improved to rely on function components for
+both Controller and LiveView rendering, ultimately simplifying the rendering stack of
+Phoenix applications and providing better reuse.
+
+New applications come with a collection of well-documented and accessible core components,
+styled with Tailwind CSS by default. You can opt-out of Tailwind CSS with the `--no-tailwind`
+flag (the Tailwind CSS classes are kept in the generated components as reference for
+future styling).
+
+## 1.7.8
 
 ### Bug Fixes
+  * Fix `mix phx.gen.release --docker` failing with `:http_util` error on Elixir v1.15
+
+## Enhancements
+  * [Phoenix.VerifiedRoutes] Add support for static resources with fragments in `~p`
+  * [phx.new] Add `--adapter` flag for generating application with webservers like bandit
+
+## 1.7.7 (2023-07-10)
+
+## Enhancements
+  * Support incoming binary payloads to channels over longpoll transport
+
+## 1.7.6 (2023-06-16)
+
+### Bug Fixes
+  * Support websock_adapter 0.5.3
+
+## Enhancements
+  *  Allow using Phoenix.ChannelTest socket/connect in another process
+
+## 1.7.5 (2023-06-15)
+
+### Bug Fixes
+  * Fix LongPoll error when draining connections
+
+## 1.7.4 (2023-06-15)
+
+### Bug Fixes
+  * Fix the WebSocket draining sending incorrect close code when draining causing LiveViews to reload the page instead of reconnecting
+
+## 1.7.3 (2023-05-30)
+
+### Enhancements
+  * Use LiveView 0.19 for new apps
+
+### Bug Fixes
+  * Fix compilation error page on plug debugger showing obscure error when app fails to compile
+  * Fix warnings being printed twice in route verification
+
+## 1.7.2 (2023-03-20)
+
+### Enhancements
+  * [Endpoint] Add socket draining for batched and orchestrated Channel/LiveView socket shutdown
+  * [code reloader] Improve the compilation error page to remove horizontal scrolling and include all warnings and errors from compilation
+  * [phx.new] Support the `--no-tailwind` and `--no-esbuild` flags
+  * [phx.new] Move heroicons to assets/vendor
+  * [phx.new] Simplify core modal to use the new JS.exec instruction to reduce footprint
+  * [sockets] Allow custom csrf_token_keys in WebSockets
+
+## 1.7.1 (2023-03-02)
+
+### Enhancements
+  * [phx.new] Embed heroicons in app.css bundle to optimize usage
+
+## 1.7.0 (2023-02-24)
+
+### Bug Fixes
+  * Fix race conditions in the longpoll transport by batching messages
+
+## 1.7.0-rc.3 (2023-02-15)
+
+### Enhancements
+  * Use stream based collections for `phx.gen.live` generators
+  * Update `phx.gen.live` generators to use `Phoenix.Component.to_form`
+
+## 1.7.0-rc.2 (2023-01-13)
+
+### Bug Fixes
+  * [Router] Fix routing bug causing incorrect matching order on similar routes
+  * [phx.new] Fix installation hanging in some cases
+
+## 1.7.0-rc.1 (2023-01-06)
+
+### Enhancements
+  * Raise if using verified routes outside of functions
+  * Add tailwind.install/esbuild.install to mix setup
+
+### Bug Fixes
+  * [Presence] fix task shutdown match causing occasional presence errors
+  * [VerifiedRoutes] Fix expansion causing more compile-time deps than necessary
+  * [phx.gen.auth] Add password inputs to password reset edit form
+  * [phx.gen.embedded] Fixes missing :references generation to phx.gen.embedded
+  * Fix textarea rendering in core components
+  * Halt all sockets on intercept to fix longpoll response already sent error
+
+## 1.7.0-rc.0 (2022-11-07)
 
 ### Deprecations
+  * `Phoenix.Controller.get_flash` has been deprecated in favor of the new `Phoenix.Flash` module, which provides unified flash access
 
-  * [Endpoint] The outdated `Phoenix.Endpoint.CowboyAdapter` for Cowboy 1 is deprecated. Please make sure `{:plug_cowboy, "~> 2.1"}` or later is listed in your `mix.exs`
-  * [Endpoint] `subscribe` and `unsubscribe` via the endpoint is deprecated, please use `Phoenix.PubSub` directly instead
+### Enhancements
+  * [Router] Add `Phoenix.VerifiedRoutes` for `~p`-based route generation with compile-time verification.
+  * [Router] Support `helpers: false` to `use Phoenix.Router` to disable helper generation
+  * [Router] Add `--info [url]` switch to `phx.routes` to get route information about a url/path
+  * [Flash] Add `Phoenix.Flash` for unfied flash access
 
-### phx.new installer
+### JavaScript Client Bug Fixes
+  * Fix heartbeat being sent after disconnect and causing abnormal disconnects
 
-  * `Phoenix.PubSub` is now started directly in your application supervision tree
+## v1.6
 
-### JavaScript client
-
-
-## v1.4
-
-The CHANGELOG for v1.4 releases can be found [in the v1.4 branch](https://github.com/phoenixframework/phoenix/blob/v1.4/CHANGELOG.md).
+The CHANGELOG for v1.6 releases can be found in the [v1.6 branch](https://github.com/phoenixframework/phoenix/blob/v1.6/CHANGELOG.md).

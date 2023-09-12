@@ -1,8 +1,14 @@
-use Mix.Config
+import Config
+
+<%= if @mailer do %>
+# Configures Swoosh API Client
+config :swoosh, :api_client, <%= @app_module %>.Finch
+
+# Disable Swoosh Local Memory Storage
+config :swoosh, local: false<% end %>
 
 # Do not print debug messages in production
 config :logger, level: :info
 
-# Finally import the config/prod.secret.exs which loads secrets
-# and configuration from environment variables.
-import_config "prod.secret.exs"
+# Runtime production configuration, including reading
+# of environment variables, is done on config/runtime.exs.

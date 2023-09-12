@@ -15,8 +15,8 @@ defmodule Phoenix.Token do
   the id from a database. For example:
 
       iex> user_id = 1
-      iex> token = Phoenix.Token.sign(MyApp.Endpoint, "user salt", user_id)
-      iex> Phoenix.Token.verify(MyApp.Endpoint, "user salt", token, max_age: 86400)
+      iex> token = Phoenix.Token.sign(MyAppWeb.Endpoint, "user auth", user_id)
+      iex> Phoenix.Token.verify(MyAppWeb.Endpoint, "user auth", token, max_age: 86400)
       {:ok, 1}
 
   In that example we have a user's id, we generate a token and
@@ -30,16 +30,17 @@ defmodule Phoenix.Token do
       the secret key base is extracted from the endpoint
     * `Plug.Conn` - where the secret key base is extracted from the
       endpoint stored in the connection
-    * `Phoenix.Socket` - where the secret key base is extracted from
-      the endpoint stored in the socket
+    * `Phoenix.Socket` or `Phoenix.LiveView.Socket` - where the secret
+      key base is extracted from the endpoint stored in the socket
     * a string, representing the secret key base itself. A key base
       with at least 20 randomly generated characters should be used
       to provide adequate entropy
 
   The second argument is a [cryptographic salt](https://en.wikipedia.org/wiki/Salt_(cryptography))
   which must be the same in both calls to `sign/4` and `verify/4`.
-  For instance, it may be called "user auth" when generating a token
-  that will be used to authenticate users on channels or on your APIs.
+  For instance, it may be called "user auth" and treated as namespace
+  when generating a token that will be used to authenticate users on
+  channels or on your APIs.
 
   The third argument can be any term (string, int, list, etc.)
   that you wish to codify into the token. Upon valid verification,
@@ -52,14 +53,14 @@ defmodule Phoenix.Token do
   One is via the meta tag:
 
       <%= tag :meta, name: "channel_token",
-                     content: Phoenix.Token.sign(@conn, "user salt", @current_user.id) %>
+                     content: Phoenix.Token.sign(@conn, "user auth", @current_user.id) %>
 
   Or an endpoint that returns it:
 
       def create(conn, params) do
         user = User.create(params)
         render(conn, "user.json",
-               %{token: Phoenix.Token.sign(conn, "user salt", user.id), user: user})
+               %{token: Phoenix.Token.sign(conn, "user auth", user.id), user: user})
       end
 
   Once the token is sent, the client may now send it back to the server
@@ -70,7 +71,7 @@ defmodule Phoenix.Token do
         use Phoenix.Socket
 
         def connect(%{"token" => token}, socket, _connect_info) do
-          case Phoenix.Token.verify(socket, "user salt", token, max_age: 86400) do
+          case Phoenix.Token.verify(socket, "user auth", token, max_age: 86400) do
             {:ok, user_id} ->
               socket = assign(socket, :user, Repo.get!(User, user_id))
               {:ok, socket}
@@ -90,10 +91,19 @@ defmodule Phoenix.Token do
   """
 
   require Logger
-  alias Plug.Crypto.{KeyGenerator, MessageVerifier, MessageEncryptor}
+
+  @type context :: Plug.Conn.t() | %{required(:endpoint) => atom, optional(atom()) => any()} | atom | binary
+
+  @type shared_opt ::
+          {:key_iterations, pos_integer}
+          | {:key_length, pos_integer}
+          | {:key_digest, :sha256 | :sha384 | :sha512}
+
+  @type max_age_opt :: {:max_age, pos_integer | :infinity}
+  @type signed_at_opt :: {:signed_at, pos_integer}
 
   @doc """
-  Encodes  and signs data into a token you can send to clients.
+  Encodes and signs data into a token you can send to clients.
 
   ## Options
 
@@ -105,12 +115,15 @@ defmodule Phoenix.Token do
       when generating the encryption and signing keys. Defaults to `:sha256`
     * `:signed_at` - set the timestamp of the token in seconds.
       Defaults to `System.system_time(:second)`
+    * `:max_age` - the default maximum age of the token. Defaults to
+      86400 seconds (1 day) and it may be overridden on verify/4.
 
   """
+  @spec sign(context, binary, term, [shared_opt | max_age_opt | signed_at_opt]) :: binary
   def sign(context, salt, data, opts \\ []) when is_binary(salt) do
-    data
-    |> encode(opts)
-    |> MessageVerifier.sign(get_key_base(context) |> get_secret(salt, opts))
+    context
+    |> get_key_base()
+    |> Plug.Crypto.sign(salt, data, opts)
   end
 
   @doc """
@@ -126,24 +139,15 @@ defmodule Phoenix.Token do
       when generating the encryption and signing keys. Defaults to `:sha256`
     * `:signed_at` - set the timestamp of the token in seconds.
       Defaults to `System.system_time(:second)`
+    * `:max_age` - the default maximum age of the token. Defaults to
+      86400 seconds (1 day) and it may be overridden on verify/4.
 
   """
-  def encrypt(context, secret, salt, data, opts \\ [])
-      when is_binary(secret) and is_binary(salt) do
-    key_base = get_key_base(context)
-
-    data
-    |> encode(opts)
-    |> MessageEncryptor.encrypt(
-      get_secret(key_base, secret, opts),
-      get_secret(key_base, salt, opts)
-    )
-  end
-
-  defp encode(data, opts) do
-    signed_at_seconds = Keyword.get(opts, :signed_at)
-    signed_at_ms = if signed_at_seconds, do: trunc(signed_at_seconds * 1000), else: now_ms()
-    :erlang.term_to_binary(%{data: data, signed: signed_at_ms})
+  @spec encrypt(context, binary, term, [shared_opt | max_age_opt | signed_at_opt]) :: binary
+  def encrypt(context, secret, data, opts \\ []) when is_binary(secret) do
+    context
+    |> get_key_base()
+    |> Plug.Crypto.encrypt(secret, data, opts)
   end
 
   @doc """
@@ -158,8 +162,8 @@ defmodule Phoenix.Token do
 
       iex> user_id    = 99
       iex> secret     = "kjoy3o1zeidquwy1398juxzldjlksahdk3"
-      iex> user_salt  = "user salt"
-      iex> token      = Phoenix.Token.sign(secret, user_salt, user_id)
+      iex> namespace  = "user auth"
+      iex> token      = Phoenix.Token.sign(secret, namespace, user_id)
 
   The mechanism for passing the token to the client is typically through a
   cookie, a JSON response body, or HTTP header. For now, assume the client has
@@ -168,48 +172,44 @@ defmodule Phoenix.Token do
   When the server receives a request, it can use `verify/4` to determine if it
   should provide the requested resources to the client:
 
-      iex> Phoenix.Token.verify(secret, user_salt, token, max_age: 86400)
+      iex> Phoenix.Token.verify(secret, namespace, token, max_age: 86400)
       {:ok, 99}
 
   In this example, we know the client sent a valid token because `verify/4`
   returned a tuple of type `{:ok, user_id}`. The server can now proceed with
   the request.
 
-  However, if the client had sent an expired or otherwise invalid token
+  However, if the client had sent an expired token, an invalid token, or `nil`,
   `verify/4` would have returned an error instead:
 
-      iex> Phoenix.Token.verify(secret, user_salt, expired, max_age: 86400)
+      iex> Phoenix.Token.verify(secret, namespace, expired, max_age: 86400)
       {:error, :expired}
 
-      iex> Phoenix.Token.verify(secret, user_salt, invalid, max_age: 86400)
+      iex> Phoenix.Token.verify(secret, namespace, invalid, max_age: 86400)
       {:error, :invalid}
+
+      iex> Phoenix.Token.verify(secret, namespace, nil, max_age: 86400)
+      {:error, :missing}
 
   ## Options
 
-    * `:max_age` - verifies the token only if it has been generated
-      "max age" ago in seconds. A reasonable value is 1 day (86400
-      seconds)
     * `:key_iterations` - option passed to `Plug.Crypto.KeyGenerator`
       when generating the encryption and signing keys. Defaults to 1000
     * `:key_length` - option passed to `Plug.Crypto.KeyGenerator`
       when generating the encryption and signing keys. Defaults to 32
     * `:key_digest` - option passed to `Plug.Crypto.KeyGenerator`
       when generating the encryption and signing keys. Defaults to `:sha256`
+    * `:max_age` - verifies the token only if it has been generated
+      "max age" ago in seconds. A reasonable value is 1 day (86400
+      seconds)
 
   """
-  def verify(context, salt, token, opts \\ [])
-
-  def verify(context, salt, token, opts) when is_binary(salt) and is_binary(token) do
-    secret = context |> get_key_base() |> get_secret(salt, opts)
-
-    case MessageVerifier.verify(token, secret) do
-      {:ok, message} -> decode(message, opts)
-      :error -> {:error, :invalid}
-    end
-  end
-
-  def verify(_context, salt, nil, _opts) when is_binary(salt) do
-    {:error, :missing}
+  @spec verify(context, binary, binary, [shared_opt | max_age_opt]) ::
+          {:ok, term} | {:error, :expired | :invalid | :missing}
+  def verify(context, salt, token, opts \\ []) when is_binary(salt) do
+    context
+    |> get_key_base()
+    |> Plug.Crypto.verify(salt, token, opts)
   end
 
   @doc """
@@ -217,43 +217,21 @@ defmodule Phoenix.Token do
 
   ## Options
 
-    * `:max_age` - verifies the token only if it has been generated
-      "max age" ago in seconds. A reasonable value is 1 day (86400
-      seconds)
     * `:key_iterations` - option passed to `Plug.Crypto.KeyGenerator`
       when generating the encryption and signing keys. Defaults to 1000
     * `:key_length` - option passed to `Plug.Crypto.KeyGenerator`
       when generating the encryption and signing keys. Defaults to 32
     * `:key_digest` - option passed to `Plug.Crypto.KeyGenerator`
       when generating the encryption and signing keys. Defaults to `:sha256`
-
+    * `:max_age` - verifies the token only if it has been generated
+      "max age" ago in seconds. Defaults to the max age signed in the
+      token (86400)
   """
-  def decrypt(context, secret, salt, token, opts \\ [])
-
-  def decrypt(context, secret, salt, token, opts)
-      when is_binary(secret) and is_binary(salt) and is_binary(token) do
-    key_base = context |> get_key_base()
-    secret = get_secret(key_base, secret, opts)
-    salt = get_secret(key_base, salt, opts)
-
-    case MessageEncryptor.decrypt(token, secret, salt) do
-      {:ok, message} -> decode(message, opts)
-      :error -> {:error, :invalid}
-    end
-  end
-
-  def decrypt(_context, secret, salt, nil, _opts) when is_binary(secret) and is_binary(salt) do
-    {:error, :missing}
-  end
-
-  defp decode(message, opts) do
-    %{data: data, signed: signed} = Plug.Crypto.safe_binary_to_term(message)
-
-    if expired?(signed, Keyword.get(opts, :max_age, 86400)) do
-      {:error, :expired}
-    else
-      {:ok, data}
-    end
+  @spec decrypt(context, binary, binary, [shared_opt | max_age_opt]) :: term()
+  def decrypt(context, secret, token, opts \\ []) when is_binary(secret) do
+    context
+    |> get_key_base()
+    |> Plug.Crypto.decrypt(secret, token, opts)
   end
 
   ## Helpers
@@ -261,8 +239,8 @@ defmodule Phoenix.Token do
   defp get_key_base(%Plug.Conn{} = conn),
     do: conn |> Phoenix.Controller.endpoint_module() |> get_endpoint_key_base()
 
-  defp get_key_base(%Phoenix.Socket{} = socket),
-    do: get_endpoint_key_base(socket.endpoint)
+  defp get_key_base(%_{endpoint: endpoint}),
+    do: get_endpoint_key_base(endpoint)
 
   defp get_key_base(endpoint) when is_atom(endpoint),
     do: get_endpoint_key_base(endpoint)
@@ -276,24 +254,9 @@ defmodule Phoenix.Token do
       no :secret_key_base configuration found in #{inspect(endpoint)}.
       Ensure your environment has the necessary mix configuration. For example:
 
-          config :my_app, MyApp.Endpoint,
+          config :my_app, MyAppWeb.Endpoint,
               secret_key_base: ...
 
       """
   end
-
-  # Gathers configuration and generates the key secrets and signing secrets.
-  defp get_secret(secret_key_base, salt, opts) do
-    iterations = Keyword.get(opts, :key_iterations, 1000)
-    length = Keyword.get(opts, :key_length, 32)
-    digest = Keyword.get(opts, :key_digest, :sha256)
-    key_opts = [iterations: iterations, length: length, digest: digest, cache: Plug.Keys]
-    KeyGenerator.generate(secret_key_base, salt, key_opts)
-  end
-
-  defp expired?(_signed, :infinity), do: false
-  defp expired?(_signed, max_age_secs) when max_age_secs <= 0, do: true
-  defp expired?(signed, max_age_secs), do: signed + trunc(max_age_secs * 1000) < now_ms()
-
-  defp now_ms, do: System.system_time(:millisecond)
 end

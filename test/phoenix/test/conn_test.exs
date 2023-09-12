@@ -1,6 +1,19 @@
 defmodule Phoenix.Test.ConnTest.CatchAll do
+  defmodule ConnError do
+    defexception [message: "hello", plug_status: 500]
+  end
+
   def init(opts), do: opts
-  def call(conn, :stat), do: conn.params["action"].(conn)
+
+  def call(conn, :stat) do
+    case conn.params["action"] do
+      "conn_404" -> raise ConnError, plug_status: 404
+      "conn_400" -> raise ConnError, plug_status: 400
+      "runtime" -> raise RuntimeError
+      "send_400" -> Plug.Conn.send_resp(conn, 400, "")
+    end
+  end
+
   def call(conn, _opts), do: Plug.Conn.assign(conn, :catch_all, true)
 end
 
@@ -26,6 +39,7 @@ defmodule Phoenix.Test.ConnTest.Router do
   scope "/" do
     pipe_through :browser
     get "/stat", CatchAll, :stat, private: %{route: :stat}
+    forward "/redir", Phoenix.Test.ConnTest.RedirRouter
     forward "/", CatchAll
   end
 
@@ -37,14 +51,11 @@ end
 
 defmodule Phoenix.Test.ConnTest do
   use ExUnit.Case, async: true
-  use Phoenix.ConnTest
+  import Plug.Conn
+  import Phoenix.ConnTest
   alias Phoenix.Test.ConnTest.{Router, RedirRouter}
 
   @moduletag :capture_log
-
-  defmodule ConnError do
-    defexception [message: nil, plug_status: 500]
-  end
 
   Application.put_env(:phoenix, Phoenix.Test.ConnTest.Endpoint, [])
 
@@ -310,7 +321,7 @@ defmodule Phoenix.Test.ConnTest do
     end
 
     assert_raise Jason.DecodeError,
-                 "unexpected byte at position 0: 0x6F ('o')", fn ->
+                 "unexpected byte at position 0: 0x6F (\"o\")", fn ->
       build_conn(:get, "/") |> put_resp_content_type("application/json")
                       |> resp(200, "ok") |> json_response(200)
     end
@@ -417,12 +428,22 @@ defmodule Phoenix.Test.ConnTest do
     end
   end
 
-  describe "redirected_params/1" do
+  describe "redirected_params/2" do
     test "with matching route" do
       conn =
         build_conn(:get, "/")
         |> RedirRouter.call(RedirRouter.init([]))
         |> put_resp_header("location", "/posts/123")
+        |> send_resp(302, "foo")
+
+      assert redirected_params(conn) == %{id: "123"}
+    end
+
+    test "with matching forwarded route" do
+      conn =
+        build_conn(:get, "/redir")
+        |> Router.call(Router.init([]))
+        |> put_resp_header("location", "/redir/posts/123")
         |> send_resp(302, "foo")
 
       assert redirected_params(conn) == %{id: "123"}
@@ -448,6 +469,34 @@ defmodule Phoenix.Test.ConnTest do
         |> put_resp_header("location", "new location")
         |> send_resp(200, "ok")
         |> redirected_params()
+      end
+    end
+
+    test "with custom status code" do
+      Enum.each(300..308, fn status ->
+        conn =
+          build_conn(:get, "/")
+          |> RedirRouter.call(RedirRouter.init([]))
+          |> put_resp_header("location", "/posts/123")
+          |> send_resp(status, "foo")
+
+        assert redirected_params(conn, status) == %{id: "123"}
+      end)
+    end
+  end
+
+  describe "path_params/1" do
+    test "with matching route" do
+      conn = RedirRouter.call(build_conn(:get, "/"), RedirRouter.init([]))
+
+      assert path_params(conn, "/posts/123") == %{id: "123"}
+    end
+
+    test "raises Phoenix.Router.NoRouteError for unmatched location" do
+      conn = RedirRouter.call(build_conn(:get, "/"), RedirRouter.init([]))
+
+      assert_raise Phoenix.Router.NoRouteError, fn ->
+        path_params(conn, "/unmatched")
       end
     end
   end
@@ -519,12 +568,12 @@ defmodule Phoenix.Test.ConnTest do
 
   test "assert_error_sent/2 with expected error response" do
     response = assert_error_sent :not_found, fn ->
-      get(build_conn(), "/stat", action: fn _ -> raise ConnError, plug_status: 404 end)
+      get(build_conn(), "/stat", action: "conn_404")
     end
     assert {404, [_h | _t], "404.html from Phoenix.ErrorView"} = response
 
     response = assert_error_sent 400, fn ->
-      get(build_conn(), "/stat", action: fn _ -> raise ConnError, plug_status: 400 end)
+      get(build_conn(), "/stat", action: "conn_400")
     end
     assert {400, [_h | _t], "400.html from Phoenix.ErrorView"} = response
   end
@@ -532,7 +581,7 @@ defmodule Phoenix.Test.ConnTest do
   test "assert_error_sent/2 with status mismatch assertion" do
     assert_raise ExUnit.AssertionError, ~r/expected error to be sent as 400 status, but got 500 from.*RuntimeError/s, fn ->
       assert_error_sent 400, fn ->
-        get(build_conn(), "/stat", action: fn _conn -> raise RuntimeError end)
+        get(build_conn(), "/stat", action: "runtime")
       end
     end
   end
@@ -552,7 +601,7 @@ defmodule Phoenix.Test.ConnTest do
   test "assert_error_sent/2 with response but no error" do
     assert_raise ExUnit.AssertionError, ~r/expected error to be sent as 400 status, but response sent 400 without error/, fn ->
       assert_error_sent :bad_request, fn ->
-        get(build_conn(), "/stat", action: fn conn -> Plug.Conn.send_resp(conn, 400, "") end)
+        get(build_conn(), "/stat", action: "send_400")
       end
     end
   end

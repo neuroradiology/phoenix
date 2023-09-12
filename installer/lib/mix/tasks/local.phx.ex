@@ -6,10 +6,12 @@ defmodule Mix.Tasks.Local.Phx do
   @moduledoc """
   Updates the Phoenix project generator locally.
 
-      mix local.phx
+      $ mix local.phx
 
   Accepts the same command line options as `archive.install hex phx_new`.
   """
+
+  @impl true
   def run(args) do
     Mix.Task.run("archive.install", ["hex", "phx_new" | args])
   end

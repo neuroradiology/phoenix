@@ -24,7 +24,7 @@ defmodule Phoenix.Endpoint do
   generator, an endpoint was automatically generated as
   part of your application:
 
-      defmodule YourApp.Endpoint do
+      defmodule YourAppWeb.Endpoint do
         use Phoenix.Endpoint, otp_app: :your_app
 
         # plug ...
@@ -39,7 +39,7 @@ defmodule Phoenix.Endpoint do
   added to the supervision tree as follows:
 
       children = [
-        YourApp.Endpoint
+        YourAppWeb.Endpoint
       ]
 
   ## Endpoint configuration
@@ -47,7 +47,7 @@ defmodule Phoenix.Endpoint do
   All endpoints are configured in your application environment.
   For example:
 
-      config :your_app, YourApp.Endpoint,
+      config :your_app, YourAppWeb.Endpoint,
         secret_key_base: "kjoy3o1zeidquwy1398juxzldjlksahdk3"
 
   Endpoint configuration is split into two categories. Compile-time
@@ -59,14 +59,14 @@ defmodule Phoenix.Endpoint do
   after your application is started and can be read through the
   `c:config/2` function:
 
-      YourApp.Endpoint.config(:port)
-      YourApp.Endpoint.config(:some_config, :default_value)
+      YourAppWeb.Endpoint.config(:port)
+      YourAppWeb.Endpoint.config(:some_config, :default_value)
 
   ### Dynamic configuration
 
   For dynamically configuring the endpoint, such as loading data
   from environment variables or configuration files, Phoenix invokes
-  the `init/2` callback on the endpoint, passing the atom `:supervisor`
+  the `c:init/2` callback on the endpoint, passing the atom `:supervisor`
   as the first argument and the endpoint configuration as second.
 
   All of Phoenix configuration, except the Compile-time configuration
@@ -76,21 +76,26 @@ defmodule Phoenix.Endpoint do
 
     * `:code_reloader` - when `true`, enables code reloading functionality.
       For the list of code reloader configuration options see
-      `Phoenix.CodeReloader.reload!/1`
+      `Phoenix.CodeReloader.reload/1`. Keep in mind code reloading is
+      based on the file-system, therefore it is not possible to run two
+      instances of the same app at the same time with code reloading in
+      development, as they will race each other and only one will effectively
+      recompile the files. In such cases, tweak your config files so code
+      reloading is enabled in only one of the apps or set the MIX_BUILD
+      environment variable to give them distinct build directories
 
     * `:debug_errors` - when `true`, uses `Plug.Debugger` functionality for
       debugging failures in the application. Recommended to be set to `true`
       only in development as it allows listing of the application source
       code during debugging. Defaults to `false`
 
-    * `:render_errors` - responsible for rendering templates whenever there
-      is a failure in the application. For example, if the application crashes
-      with a 500 error during a HTML request, `render("500.html", assigns)`
-      will be called in the view given to `:render_errors`. Defaults to:
-
-          [view: MyApp.ErrorView, accepts: ~w(html), layout: false]
-
-      The default format is used when none is set in the connection
+    * `:force_ssl` - ensures no data is ever sent via HTTP, always redirecting
+      to HTTPS. It expects a list of options which are forwarded to `Plug.SSL`.
+      By default it sets the "strict-transport-security" header in HTTPS requests,
+      forcing browsers to always use HTTPS. If an unsafe request (HTTP) is sent,
+      it redirects to the HTTPS version using the `:host` specified in the `:url`
+      configuration. To dynamically redirect to the `host` of the current request,
+      set `:host` in the `:force_ssl` configuration to `nil`
 
   ### Runtime configuration
 
@@ -100,20 +105,25 @@ defmodule Phoenix.Endpoint do
     * `:cache_static_manifest` - a path to a json manifest file that contains
       static files and their digested version. This is typically set to
       "priv/static/cache_manifest.json" which is the file automatically generated
-      by `mix phx.digest`.
-      It can be either: a string containing a file system path or a tuple containing 
-      the application name and the path within that application.
+      by `mix phx.digest`. It can be either: a string containing a file system path
+      or a tuple containing the application name and the path within that application.
+
+    * `:cache_static_manifest_latest` - a map of the static files pointing to their
+      digest version. This is automatically loaded from `cache_static_manifest` on
+      boot. However, if you have your own static handling mechanism, you may want to
+      set this value explicitly. This is used by projects such as `LiveView` to
+      detect if the client is running on the latest version of all assets.
+
+    * `:cache_manifest_skip_vsn` - when true, skips the appended query string
+      "?vsn=d" when generating paths to static assets. This query string is used
+      by `Plug.Static` to set long expiry dates, therefore, you should set this
+      option to true only if you are not using `Plug.Static` to serve assets,
+      for example, if you are using a CDN. If you are setting this option, you
+      should also consider passing `--no-vsn` to `mix phx.digest`. Defaults to
+      `false`.
 
     * `:check_origin` - configure the default `:check_origin` setting for
       transports. See `socket/3` for options. Defaults to `true`.
-
-    * `:force_ssl` - ensures no data is ever sent via HTTP, always redirecting
-      to HTTPS. It expects a list of options which are forwarded to `Plug.SSL`.
-      By default it sets the "strict-transport-security" header in HTTPS requests,
-      forcing browsers to always use HTTPS. If an unsafe request (HTTP) is sent,
-      it redirects to the HTTPS version using the `:host` specified in the `:url`
-      configuration. To dynamically redirect to the `host` of the current request,
-      set `:host` in the `:force_ssl` configuration to `nil`
 
     * `:secret_key_base` - a secret key used as a base to generate secrets
       for encrypting and signing data. For example, cookies and tokens
@@ -130,15 +140,8 @@ defmodule Phoenix.Endpoint do
 
           [host: "localhost", path: "/"]
 
-      The `:port` option requires either an integer, string, or
-      `{:system, "ENV_VAR"}`. When given a tuple like `{:system, "PORT"}`,
-      the port will be referenced from `System.get_env("PORT")` at runtime
-      as a workaround for releases where environment specific information
-      is loaded only at compile-time.
-
-      The `:host` option requires a string or `{:system, "ENV_VAR"}`. Similar
-      to `:port`, when given a tuple like `{:system, "HOST"}`, the host
-      will be referenced from `System.get_env("HOST")` at runtime.
+      The `:port` option requires either an integer or string. The `:host`
+      option requires a string.
 
       The `:scheme` option accepts `"http"` and `"https"` values. Default value
       is inferred from top level `:http` or `:https` option. It is useful
@@ -155,32 +158,43 @@ defmodule Phoenix.Endpoint do
     * `:watchers` - a set of watchers to run alongside your server. It
       expects a list of tuples containing the executable and its arguments.
       Watchers are guaranteed to run in the application directory, but only
-      when the server is enabled. For example, the watcher below will run
-      the "watch" mode of the webpack build tool when the server starts.
-      You can configure it to whatever build tool or command you want:
+      when the server is enabled (unless `:force_watchers` configuration is
+      set to `true`). For example, the watcher below will run the "watch" mode
+      of the webpack build tool when the server starts. You can configure it
+      to whatever build tool or command you want:
 
-          [node: ["node_modules/webpack/bin/webpack.js", "--mode", "development",
-              "--watch-stdin"]]
+          [
+            node: [
+              "node_modules/webpack/bin/webpack.js",
+              "--mode",
+              "development",
+              "--watch",
+              "--watch-options-stdin"
+            ]
+          ]
 
-      The `:cd` option can be used on a watcher to override the folder from
-      which the watcher will run. By default this will be the project's root:
-      `File.cwd!()`
+      The `:cd` and `:env` options can be given at the end of the list to customize
+      the watcher:
 
-          [node: ["node_modules/webpack/bin/webpack.js", "--mode", "development",
-              "--watch-stdin", cd: "my_frontend"]]
+          [node: [..., cd: "assets", env: [{"TAILWIND_MODE", "watch"}]]]
+
+      A watcher can also be a module-function-args tuple that will be invoked accordingly:
+
+          [another: {Mod, :fun, [arg1, arg2]}]
+
+    * `:force_watchers` - when `true`, forces your watchers to start
+      even when the `:server` option is set to `false`.
 
     * `:live_reload` - configuration for the live reload option.
       Configuration requires a `:patterns` option which should be a list of
       file patterns to watch. When these files change, it will trigger a reload.
-      If you are using a tool like [pow](http://pow.cx) in development,
-      you may need to set the `:url` option appropriately.
 
           live_reload: [
             url: "ws://localhost:4000",
             patterns: [
-              ~r{priv/static/.*(js|css|png|jpeg|jpg|gif)$},
-              ~r{web/views/.*(ex)$},
-              ~r{web/templates/.*(eex)$}
+              ~r"priv/static/.*(js|css|png|jpeg|jpg|gif|svg)$",
+              ~r"lib/app_web/(live|views)/.*(ex)$",
+              ~r"lib/app_web/templates/.*(eex)$"
             ]
           ]
 
@@ -188,11 +202,27 @@ defmodule Phoenix.Endpoint do
       and via the Endpoint broadcast functions. The PubSub server is typically
       started in your supervision tree.
 
+    * `:render_errors` - responsible for rendering templates whenever there
+      is a failure in the application. For example, if the application crashes
+      with a 500 error during a HTML request, `render("500.html", assigns)`
+      will be called in the view given to `:render_errors`.
+      A `:formats` list can be provided to specify a module per format to handle
+      error rendering. Example:
+
+          [formats: [html: MyApp.ErrorHTML], layout: false, log: :debug]
+
+    * `:log_access_url` - log the access url once the server boots
+
+  Note that you can also store your own configurations in the Phoenix.Endpoint.
+  For example, [Phoenix LiveView](https://hexdocs.pm/phoenix_live_view) expects
+  its own configuration under the `:live_view` key. In such cases, you should
+  consult the documentation of the respective projects.
+
   ### Adapter configuration
 
   Phoenix allows you to choose which webserver adapter to use. The default
   is `Phoenix.Endpoint.Cowboy2Adapter` which can be configured via the
-  following options.
+  following top-level options.
 
     * `:http` - the configuration for the HTTP server. It accepts all options
       as defined by [`Plug.Cowboy`](https://hexdocs.pm/plug_cowboy/). Defaults
@@ -202,10 +232,15 @@ defmodule Phoenix.Endpoint do
       as defined by [`Plug.Cowboy`](https://hexdocs.pm/plug_cowboy/). Defaults
       to `false`
 
-    * `:drainer` - a drainer process that triggers when your application is
-      shutting to wait for any on-going request to finish. It accepts all
-      options as defined by [`Plug.Cowboy`](https://hexdocs.pm/plug_cowboy/Plug.Cowboy.Drainer.httml).
-      Defaults to `[]` and can be disabled by setting it to false.
+    * `:drainer` - a drainer process waits for any on-going request to finish
+      during application shutdown. It accepts the `:shutdown` and
+      `:check_interval` options as defined by `Plug.Cowboy.Drainer`.
+      Note the draining does not terminate any existing connection, it simply
+      waits for them to finish. Socket connections run their own drainer
+      before this one is invoked. That's because sockets are stateful and
+      can be gracefully notified, which allows us to stagger them over a
+      longer period of time. See the documentation for `socket/3` for more
+      information
 
   ## Endpoint API
 
@@ -215,58 +250,20 @@ defmodule Phoenix.Endpoint do
 
     * for handling paths and URLs: `c:struct_url/0`, `c:url/0`, `c:path/1`,
       `c:static_url/0`,`c:static_path/1`, and `c:static_integrity/1`
+
     * for broadcasting to channels: `c:broadcast/3`, `c:broadcast!/3`,
       `c:broadcast_from/4`, `c:broadcast_from!/4`, `c:local_broadcast/3`,
       and `c:local_broadcast_from/4`
-    * for configuration: `c:start_link/0`, `c:config/2`, and `c:config_change/2`
+
+    * for configuration: `c:start_link/1`, `c:config/2`, and `c:config_change/2`
+
     * as required by the `Plug` behaviour: `c:Plug.init/1` and `c:Plug.call/2`
-
-  ## Instrumentation
-
-  Phoenix uses the `:telemetry` library for instrumentation. The following events
-  are published by Phoenix with the following measurements and metadata:
-
-    * `[:phoenix, :endpoint, :start]` - dispatched by `Plug.Telemetry` in your
-      endpoint at the beginning of every request.
-      * Measurement: `%{time: System.monotonic_time}`
-      * Metadata: `%{conn: Plug.Conn.t}`
-
-    * `[:phoenix, :endpoint, :stop]` - dispatched by `Plug.Telemetry` in your
-      endpoint whenever the response is sent
-      * Measurement: `%{duration: native_time}`
-      * Metadata: `%{conn: Plug.Conn.t}`
-
-    * `[:phoenix, :router_dispatch, :start]` - dispatched by `Phoenix.Router`
-      before dispatching to a matched route
-      * Measurement: `%{time: System.monotonic_time}`
-      * Metadata: `%{conn: Plug.Conn.t, route: binary, plug: module, plug_opts: term, path_params: map, pipe_through: [atom]}`
-
-    * `[:phoenix, :router_dispatch, :stop]` - dispatched by `Phoenix.Router`
-      after successfully dispatching to a matched route
-      * Measurement: `%{duration: native_time}`
-      * Metadata: `%{conn: Plug.Conn.t, route: binary, plug: module, plug_opts: term, path_params: map, pipe_through: [atom]}`
-
-    * `[:phoenix, :error_rendered]` - dispatched at the end of an error view being rendered
-      * Measurement: `%{duration: native_time}`
-      * Metadata: `%{status: Plug.Conn.status, kind: Exception.kind, reason: term, stacktrace: Exception.stacktrace}`
-
-    * `[:phoenix, :socket_connected]` - dispatched at the end of a socket connection
-      * Measurement: `%{duration: native_time}`
-      * Metadata: `%{endpoint: atom, transport: atom, params: term, connect_info: map, vsn: binary, user_socket: atom, result: :ok | :error, serializer: atom}`
-
-    * `[:phoenix, :channel_joined]` - dispatched at the end of a channel join
-      * Measurement: `%{duration: native_time}`
-      * Metadata: `%{params: term, socket: Phoenix.Socket.t}`
-
-    * `[:phoenix, :channel_handled_in]` - dispatched at the end of a channel handle in
-      * Measurement: `%{duration: native_time}`
-      * Metadata: `%{event: binary, params: term, socket: Phoenix.Socket.t}`
 
   """
 
   @type topic :: String.t
   @type event :: String.t
-  @type msg :: map
+  @type msg :: map | {:binary, binary}
 
   require Logger
 
@@ -278,7 +275,7 @@ defmodule Phoenix.Endpoint do
   Starts endpoint's configuration cache and possibly the servers for
   handling requests.
   """
-  @callback start_link() :: Supervisor.on_start
+  @callback start_link(keyword) :: Supervisor.on_start
 
   @doc """
   Access the endpoint configuration given by key.
@@ -335,7 +332,29 @@ defmodule Phoenix.Endpoint do
   """
   @callback static_lookup(path :: String.t) :: {String.t, String.t} | {String.t, nil}
 
+  @doc """
+  Returns the script name from the :url configuration.
+  """
+  @callback script_name() :: [String.t]
+
+  @doc """
+  Returns the host from the :url configuration.
+  """
+  @callback host() :: String.t
+
   # Channels
+
+  @doc """
+  Subscribes the caller to the given topic.
+
+  See `Phoenix.PubSub.subscribe/3` for options.
+  """
+  @callback subscribe(topic, opts :: Keyword.t) :: :ok | {:error, term}
+
+  @doc """
+  Unsubscribes the caller from the given topic.
+  """
+  @callback unsubscribe(topic) :: :ok | {:error, term}
 
   @doc """
   Broadcasts a `msg` as `event` in the given `topic` to all nodes.
@@ -347,7 +366,7 @@ defmodule Phoenix.Endpoint do
 
   Raises in case of failures.
   """
-  @callback broadcast!(topic, event, msg) :: :ok | no_return
+  @callback broadcast!(topic, event, msg) :: :ok
 
   @doc """
   Broadcasts a `msg` from the given `from` as `event` in the given `topic` to all nodes.
@@ -359,7 +378,7 @@ defmodule Phoenix.Endpoint do
 
   Raises in case of failures.
   """
-  @callback broadcast_from!(from :: pid, topic, event, msg) :: :ok | no_return
+  @callback broadcast_from!(from :: pid, topic, event, msg) :: :ok
 
   @doc """
   Broadcasts a `msg` as `event` in the given `topic` within the current node.
@@ -388,12 +407,6 @@ defmodule Phoenix.Endpoint do
       @otp_app unquote(opts)[:otp_app] || raise "endpoint expects :otp_app to be given"
       var!(config) = Phoenix.Endpoint.Supervisor.config(@otp_app, __MODULE__)
       var!(code_reloading?) = var!(config)[:code_reloader]
-      @compile_config Keyword.take(var!(config), Phoenix.Endpoint.Supervisor.compile_config_keys)
-
-      @doc false
-      def __compile_config__ do
-        @compile_config
-      end
 
       # Avoid unused variable warnings
       _ = var!(code_reloading?)
@@ -409,12 +422,10 @@ defmodule Phoenix.Endpoint do
 
   defp pubsub() do
     quote do
-      @deprecated "#{inspect(__MODULE__)}.subscribe/2 is deprecated, please call Phoenix.PubSub directly instead"
       def subscribe(topic, opts \\ []) when is_binary(topic) do
-        Phoenix.PubSub.subscribe(pubsub_server!(), topic, [])
+        Phoenix.PubSub.subscribe(pubsub_server!(), topic, opts)
       end
 
-      @deprecated "#{inspect(__MODULE__)}.unsubscribe/1 is deprecated, please call Phoenix.PubSub directly instead"
       def unsubscribe(topic) do
         Phoenix.PubSub.unsubscribe(pubsub_server!(), topic)
       end
@@ -467,13 +478,14 @@ defmodule Phoenix.Endpoint do
           banner: {Phoenix.Endpoint.RenderErrors, :__debugger_banner__, []},
           style: [
             primary: "#EB532D",
-            logo: "data:image/png;base64,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"
+            logo: "data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgNzEgNDgiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgeG1sbnM6eGxpbms9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkveGxpbmsiPgoJPHBhdGggZD0ibTI2LjM3MSAzMy40NzctLjU1Mi0uMWMtMy45Mi0uNzI5LTYuMzk3LTMuMS03LjU3LTYuODI5LS43MzMtMi4zMjQuNTk3LTQuMDM1IDMuMDM1LTQuMTQ4IDEuOTk1LS4wOTIgMy4zNjIgMS4wNTUgNC41NyAyLjM5IDEuNTU3IDEuNzIgMi45ODQgMy41NTggNC41MTQgNS4zMDUgMi4yMDIgMi41MTUgNC43OTcgNC4xMzQgOC4zNDcgMy42MzQgMy4xODMtLjQ0OCA1Ljk1OC0xLjcyNSA4LjM3MS0zLjgyOC4zNjMtLjMxNi43NjEtLjU5MiAxLjE0NC0uODg2bC0uMjQxLS4yODRjLTIuMDI3LjYzLTQuMDkzLjg0MS02LjIwNS43MzUtMy4xOTUtLjE2LTYuMjQtLjgyOC04Ljk2NC0yLjU4Mi0yLjQ4Ni0xLjYwMS00LjMxOS0zLjc0Ni01LjE5LTYuNjExLS43MDQtMi4zMTUuNzM2LTMuOTM0IDMuMTM1LTMuNi45NDguMTMzIDEuNzQ2LjU2IDIuNDYzIDEuMTY1LjU4My40OTMgMS4xNDMgMS4wMTUgMS43MzggMS40OTMgMi44IDIuMjUgNi43MTIgMi4zNzUgMTAuMjY1LS4wNjgtNS44NDItLjAyNi05LjgxNy0zLjI0LTEzLjMwOC03LjMxMy0xLjM2Ni0xLjU5NC0yLjctMy4yMTYtNC4wOTUtNC43ODUtMi42OTgtMy4wMzYtNS42OTItNS43MS05Ljc5LTYuNjIzQzEyLjgtLjYyMyA3Ljc0NS4xNCAyLjg5MyAyLjM2MSAxLjkyNiAyLjgwNC45OTcgMy4zMTkgMCA0LjE0OWMuNDk0IDAgLjc2My4wMDYgMS4wMzIgMCAyLjQ0Ni0uMDY0IDQuMjggMS4wMjMgNS42MDIgMy4wMjQuOTYyIDEuNDU3IDEuNDE1IDMuMTA0IDEuNzYxIDQuNzk4LjUxMyAyLjUxNS4yNDcgNS4wNzguNTQ0IDcuNjA1Ljc2MSA2LjQ5NCA0LjA4IDExLjAyNiAxMC4yNiAxMy4zNDYgMi4yNjcuODUyIDQuNTkxIDEuMTM1IDcuMTcyLjU1NVpNMTAuNzUxIDMuODUyYy0uOTc2LjI0Ni0xLjc1Ni0uMTQ4LTIuNTYtLjk2MiAxLjM3Ny0uMzQzIDIuNTkyLS40NzYgMy44OTctLjUyOC0uMTA3Ljg0OC0uNjA3IDEuMzA2LTEuMzM2IDEuNDlabTMyLjAwMiAzNy45MjRjLS4wODUtLjYyNi0uNjItLjkwMS0xLjA0LTEuMjI4LTEuODU3LTEuNDQ2LTQuMDMtMS45NTgtNi4zMzMtMi0xLjM3NS0uMDI2LTIuNzM1LS4xMjgtNC4wMzEtLjYxLS41OTUtLjIyLTEuMjYtLjUwNS0xLjI0NC0xLjI3Mi4wMTUtLjc4LjY5My0xIDEuMzEtMS4xODQuNTA1LS4xNSAxLjAyNi0uMjQ3IDEuNi0uMzgyLTEuNDYtLjkzNi0yLjg4Ni0xLjA2NS00Ljc4Ny0uMy0yLjk5MyAxLjIwMi01Ljk0MyAxLjA2LTguOTI2LS4wMTctMS42ODQtLjYwOC0zLjE3OS0xLjU2My00LjczNS0yLjQwOGwtLjA0My4wM2EyLjk2IDIuOTYgMCAwIDAgLjA0LS4wMjljLS4wMzgtLjExNy0uMTA3LS4xMi0uMTk3LS4wNTRsLjEyMi4xMDdjMS4yOSAyLjExNSAzLjAzNCAzLjgxNyA1LjAwNCA1LjI3MSAzLjc5MyAyLjggNy45MzYgNC40NzEgMTIuNzg0IDMuNzNBNjYuNzE0IDY2LjcxNCAwIDAgMSAzNyA0MC44NzdjMS45OC0uMTYgMy44NjYuMzk4IDUuNzUzLjg5OVptLTkuMTQtMzAuMzQ1Yy0uMTA1LS4wNzYtLjIwNi0uMjY2LS40Mi0uMDY5IDEuNzQ1IDIuMzYgMy45ODUgNC4wOTggNi42ODMgNS4xOTMgNC4zNTQgMS43NjcgOC43NzMgMi4wNyAxMy4yOTMuNTEgMy41MS0xLjIxIDYuMDMzLS4wMjggNy4zNDMgMy4zOC4xOS0zLjk1NS0yLjEzNy02LjgzNy01Ljg0My03LjQwMS0yLjA4NC0uMzE4LTQuMDEuMzczLTUuOTYyLjk0LTUuNDM0IDEuNTc1LTEwLjQ4NS43OTgtMTUuMDk0LTIuNTUzWm0yNy4wODUgMTUuNDI1Yy43MDguMDU5IDEuNDE2LjEyMyAyLjEyNC4xODUtMS42LTEuNDA1LTMuNTUtMS41MTctNS41MjMtMS40MDQtMy4wMDMuMTctNS4xNjcgMS45MDMtNy4xNCAzLjk3Mi0xLjczOSAxLjgyNC0zLjMxIDMuODctNS45MDMgNC42MDQuMDQzLjA3OC4wNTQuMTE3LjA2Ni4xMTcuMzUuMDA1LjY5OS4wMjEgMS4wNDcuMDA1IDMuNzY4LS4xNyA3LjMxNy0uOTY1IDEwLjE0LTMuNy44OS0uODYgMS42ODUtMS44MTcgMi41NDQtMi43MS43MTYtLjc0NiAxLjU4NC0xLjE1OSAyLjY0NS0xLjA3Wm0tOC43NTMtNC42N2MtMi44MTIuMjQ2LTUuMjU0IDEuNDA5LTcuNTQ4IDIuOTQzLTEuNzY2IDEuMTgtMy42NTQgMS43MzgtNS43NzYgMS4zNy0uMzc0LS4wNjYtLjc1LS4xMTQtMS4xMjQtLjE3bC0uMDEzLjE1NmMuMTM1LjA3LjI2NS4xNTEuNDA1LjIwNy4zNTQuMTQuNzAyLjMwOCAxLjA3LjM5NSA0LjA4My45NzEgNy45OTIuNDc0IDExLjUxNi0xLjgwMyAyLjIyMS0xLjQzNSA0LjUyMS0xLjcwNyA3LjAxMy0xLjMzNi4yNTIuMDM4LjUwMy4wODMuNzU2LjEwNy4yMzQuMDIyLjQ3OS4yNTUuNzk1LjAwMy0yLjE3OS0xLjU3NC00LjUyNi0yLjA5Ni03LjA5NC0xLjg3MlptLTEwLjA0OS05LjU0NGMxLjQ3NS4wNTEgMi45NDMtLjE0MiA0LjQ4Ni0xLjA1OS0uNDUyLjA0LS42NDMuMDQtLjgyNy4wNzYtMi4xMjYuNDI0LTQuMDMzLS4wNC01LjczMy0xLjM4My0uNjIzLS40OTMtMS4yNTctLjk3NC0xLjg4OS0xLjQ1Ny0yLjUwMy0xLjkxNC01LjM3NC0yLjU1NS04LjUxNC0yLjUuMDUuMTU0LjA1NC4yNi4xMDguMzE1IDMuNDE3IDMuNDU1IDcuMzcxIDUuODM2IDEyLjM2OSA2LjAwOFptMjQuNzI3IDE3LjczMWMtMi4xMTQtMi4wOTctNC45NTItMi4zNjctNy41NzgtLjUzNyAxLjczOC4wNzggMy4wNDMuNjMyIDQuMTAxIDEuNzI4LjM3NC4zODguNzYzLjc2OCAxLjE4MiAxLjEwNiAxLjYgMS4yOSA0LjMxMSAxLjM1MiA1Ljg5Ni4xNTUtMS44NjEtLjcyNi0xLjg2MS0uNzI2LTMuNjAxLTIuNDUyWm0tMjEuMDU4IDE2LjA2Yy0xLjg1OC0zLjQ2LTQuOTgxLTQuMjQtOC41OS00LjAwOGE5LjY2NyA5LjY2NyAwIDAgMSAyLjk3NyAxLjM5Yy44NC41ODYgMS41NDcgMS4zMTEgMi4yNDMgMi4wNTUgMS4zOCAxLjQ3MyAzLjUzNCAyLjM3NiA0Ljk2MiAyLjA3LS42NTYtLjQxMi0xLjIzOC0uODQ4LTEuNTkyLTEuNTA3Wm0xNy4yOS0xOS4zMmMwLS4wMjMuMDAxLS4wNDUuMDAzLS4wNjhsLS4wMDYuMDA2LjAwNi0uMDA2LS4wMzYtLjAwNC4wMjEuMDE4LjAxMi4wNTNabS0yMCAxNC43NDRhNy42MSA3LjYxIDAgMCAwLS4wNzItLjA0MS4xMjcuMTI3IDAgMCAwIC4wMTUuMDQzYy4wMDUuMDA4LjAzOCAwIC4wNTgtLjAwMlptLS4wNzItLjA0MS0uMDA4LS4wMzQtLjAwOC4wMS4wMDgtLjAxLS4wMjItLjAwNi4wMDUuMDI2LjAyNC4wMTRaIgogICAgICAgICAgICBmaWxsPSIjRkQ0RjAwIiAvPgo8L3N2Zz4K"
           ]
       end
 
+      plug :socket_dispatch
+
       # Compile after the debugger so we properly wrap it.
       @before_compile Phoenix.Endpoint
-      @phoenix_render_errors var!(config)[:render_errors]
     end
   end
 
@@ -493,6 +505,8 @@ defmodule Phoenix.Endpoint do
 
       @doc """
       Starts the endpoint supervision tree.
+
+      All other options are merged into the endpoint configuration.
       """
       def start_link(opts \\ []) do
         Phoenix.Endpoint.Supervisor.start_link(@otp_app, __MODULE__, opts)
@@ -517,16 +531,17 @@ defmodule Phoenix.Endpoint do
         Phoenix.Endpoint.Supervisor.config_change(__MODULE__, changed, removed)
       end
 
+      defp persistent!() do
+        :persistent_term.get({Phoenix.Endpoint, __MODULE__}, nil) ||
+          raise "could not find persistent term for endpoint #{inspect(__MODULE__)}. Make sure your endpoint is started and note you cannot access endpoint functions at compile-time"
+      end
+
       @doc """
       Generates the endpoint base URL without any path information.
 
       It uses the configuration under `:url` to generate such.
       """
-      def url do
-        Phoenix.Config.cache(__MODULE__,
-          :__phoenix_url__,
-          &Phoenix.Endpoint.Supervisor.url/1)
-      end
+      def url, do: persistent!().url
 
       @doc """
       Generates the static URL without any path information.
@@ -534,11 +549,7 @@ defmodule Phoenix.Endpoint do
       It uses the configuration under `:static_url` to generate
       such. It falls back to `:url` if `:static_url` is not set.
       """
-      def static_url do
-        Phoenix.Config.cache(__MODULE__,
-          :__phoenix_static_url__,
-          &Phoenix.Endpoint.Supervisor.static_url/1)
-      end
+      def static_url, do: persistent!().static_url
 
       @doc """
       Generates the endpoint base URL but as a `URI` struct.
@@ -547,55 +558,46 @@ defmodule Phoenix.Endpoint do
       Useful for manipulating the URL data and passing it to
       URL helpers.
       """
-      def struct_url do
-        Phoenix.Config.cache(__MODULE__,
-          :__phoenix_struct_url__,
-          &Phoenix.Endpoint.Supervisor.struct_url/1)
-      end
+      def struct_url, do: persistent!().struct_url
 
       @doc """
       Returns the host for the given endpoint.
       """
-      def host do
-        Phoenix.Config.cache(__MODULE__,
-          :__phoenix_host__,
-          &Phoenix.Endpoint.Supervisor.host/1)
-      end
+      def host, do: persistent!().host
 
       @doc """
       Generates the path information when routing to this endpoint.
       """
-      def path(path) do
-        Phoenix.Config.cache(__MODULE__,
-          :__phoenix_path__,
-          &Phoenix.Endpoint.Supervisor.path/1) <> path
-      end
+      def path(path), do: persistent!().path <> path
 
       @doc """
       Generates the script name.
       """
-      def script_name do
-        Phoenix.Config.cache(__MODULE__,
-          :__phoenix_script_name__,
-          &Phoenix.Endpoint.Supervisor.script_name/1)
-      end
+      def script_name, do: persistent!().script_name
 
       @doc """
       Generates a route to a static file in `priv/static`.
       """
       def static_path(path) do
-        Phoenix.Config.cache(__MODULE__, :__phoenix_static__,
-                             &Phoenix.Endpoint.Supervisor.static_path/1) <>
-        elem(static_lookup(path), 0)
+        {path, fragment} = path_and_fragment(path)
+
+        persistent!().static_path <> elem(static_lookup(path), 0) <> fragment
+      end
+
+      defp path_and_fragment(path_incl_fragment) do
+        path_incl_fragment
+        |> String.split("#", parts: 2)
+        |> case do
+          [path, fragment] -> {path, "#" <> fragment}
+          [path | _] -> {path, ""}
+        end
       end
 
       @doc """
       Generates a base64-encoded cryptographic hash (sha512) to a static file
       in `priv/static`. Meant to be used for Subresource Integrity with CDNs.
       """
-      def static_integrity(path) do
-        elem(static_lookup(path), 1)
-      end
+      def static_integrity(path), do: elem(static_lookup(path), 1)
 
       @doc """
       Returns a two item tuple with the first item being the `static_path`
@@ -621,10 +623,10 @@ defmodule Phoenix.Endpoint do
 
     dispatches =
       for {path, socket, socket_opts} <- sockets,
-          {path, type, conn_ast, socket, opts} <- socket_paths(module, path, socket, socket_opts) do
+          {path, plug, conn_ast, plug_opts} <- socket_paths(module, path, socket, socket_opts) do
         quote do
-          defp do_handler(unquote(path), conn, _opts) do
-            {unquote(type), unquote(conn_ast), unquote(socket), unquote(Macro.escape(opts))}
+          defp do_socket_dispatch(unquote(path), conn) do
+            halt(unquote(plug).call(unquote(conn_ast), unquote(Macro.escape(plug_opts))))
           end
         end
       end
@@ -634,8 +636,7 @@ defmodule Phoenix.Endpoint do
 
       # Inline render errors so we set the endpoint before calling it.
       def call(conn, opts) do
-        conn = put_in conn.secret_key_base, config(:secret_key_base)
-        conn = put_in conn.script_name, script_name()
+        conn = %{conn | script_name: script_name(), secret_key_base: config(:secret_key_base)}
         conn = Plug.Conn.put_private(conn, :phoenix_endpoint, __MODULE__)
 
         try do
@@ -643,11 +644,11 @@ defmodule Phoenix.Endpoint do
         rescue
           e in Plug.Conn.WrapperError ->
             %{conn: conn, kind: kind, reason: reason, stack: stack} = e
-            Phoenix.Endpoint.RenderErrors.__catch__(conn, kind, reason, stack, @phoenix_render_errors)
+            Phoenix.Endpoint.RenderErrors.__catch__(conn, kind, reason, stack, config(:render_errors))
         catch
           kind, reason ->
-            stack = System.stacktrace()
-            Phoenix.Endpoint.RenderErrors.__catch__(conn, kind, reason, stack, @phoenix_render_errors)
+            stack = __STACKTRACE__
+            Phoenix.Endpoint.RenderErrors.__catch__(conn, kind, reason, stack, config(:render_errors))
         end
       end
 
@@ -655,9 +656,9 @@ defmodule Phoenix.Endpoint do
       def __sockets__, do: unquote(Macro.escape(sockets))
 
       @doc false
-      def __handler__(%{path_info: path} = conn, opts), do: do_handler(path, conn, opts)
+      def socket_dispatch(%{path_info: path} = conn, _opts), do: do_socket_dispatch(path, conn)
       unquote(dispatches)
-      defp do_handler(_path, conn, opts), do: {:plug, conn, __MODULE__, opts}
+      defp do_socket_dispatch(_path, conn), do: conn
     end
   end
 
@@ -669,8 +670,9 @@ defmodule Phoenix.Endpoint do
     paths =
       if websocket do
         config = Phoenix.Socket.Transport.load_config(websocket, Phoenix.Transports.WebSocket)
+        plug_init = {endpoint, socket, config}
         {conn_ast, match_path} = socket_path(path, config)
-        [{match_path, :websocket, conn_ast, socket, config} | paths]
+        [{match_path, Phoenix.Transports.WebSocket, conn_ast, plug_init} | paths]
       else
         paths
       end
@@ -680,7 +682,7 @@ defmodule Phoenix.Endpoint do
         config = Phoenix.Socket.Transport.load_config(longpoll, Phoenix.Transports.LongPoll)
         plug_init = {endpoint, socket, config}
         {conn_ast, match_path} = socket_path(path, config)
-        [{match_path, :plug, conn_ast, Phoenix.Transports.LongPoll, plug_init} | paths]
+        [{match_path, Phoenix.Transports.LongPoll, conn_ast, plug_init} | paths]
       else
         paths
       end
@@ -702,9 +704,14 @@ defmodule Phoenix.Endpoint do
             conn
           end
         else
-          params_map = {:%{}, [], Plug.Router.Utils.build_path_params_match(vars)}
+          params =
+            for var <- vars,
+                param = Atom.to_string(var),
+                not match?("_" <> _, param),
+                do: {param, Macro.var(var, nil)}
+
           quote do
-            params = unquote(params_map)
+            params = %{unquote_splicing(params)}
             %Plug.Conn{conn | path_params: params, params: params}
           end
         end
@@ -715,28 +722,30 @@ defmodule Phoenix.Endpoint do
   ## API
 
   @doc """
-  Defines a websocket/longpoll mount-point for a socket.
+  Defines a websocket/longpoll mount-point for a `socket`.
 
-  Note: for backwards compatibility purposes, the `:websocket`
-  and `:longpoll` options only have an effect if the socket
-  given as argument has no `transport` declarations in it.
+  It expects a `path`, a `socket` module, and a set of options.
+  The socket module is typically defined with `Phoenix.Socket`.
+
+  Both websocket and longpolling connections are supported out
+  of the box.
 
   ## Options
 
     * `:websocket` - controls the websocket configuration.
       Defaults to `true`. May be false or a keyword list
-      of options. See "Shared configuration" and
-      "WebSocket configuration" for the whole list
+      of options. See ["Common configuration"](#socket/3-common-configuration)
+      and ["WebSocket configuration"](#socket/3-websocket-configuration)
+      for the whole list
 
     * `:longpoll` - controls the longpoll configuration.
       Defaults to `false`. May be true or a keyword list
-      of options. See "Shared configuration" and
-      "Longpoll configuration" for the whole list
+      of options. See ["Common configuration"](#socket/3-common-configuration)
+      and ["Longpoll configuration"](#socket/3-longpoll-configuration)
+      for the whole list
 
-  If your socket is implemented using `Phoenix.Socket`,
-  you can also pass here all options accepted on
-  `use Phoenix.Socket`. An option given here will override
-  the value in `Phoenix.Socket`.
+  You can also pass the options below on `use Phoenix.Socket`.
+  The values specified here override the value in `use Phoenix.Socket`.
 
   ## Examples
 
@@ -753,8 +762,6 @@ defmodule Phoenix.Endpoint do
 
       socket "/ws/:user_id", MyApp.UserSocket,
         websocket: [path: "/project/:project_id"]
-
-  Note: This feature is not supported with the Cowboy 1 adapter.
 
   ## Common configuration
 
@@ -775,7 +782,7 @@ defmodule Phoenix.Endpoint do
       are allowed, or a function provided as MFA tuple. Defaults to `:check_origin`
       setting at endpoint configuration.
 
-      If `true`, the header is checked against `:host` in `YourApp.Endpoint.config(:url)[:host]`.
+      If `true`, the header is checked against `:host` in `YourAppWeb.Endpoint.config(:url)[:host]`.
 
       If `false`, your app is vulnerable to Cross-Site WebSocket Hijacking (CSWSH)
       attacks. Only use in development, when the host is truly unknown or when
@@ -790,46 +797,98 @@ defmodule Phoenix.Endpoint do
             "//*.other.com"
           ]
 
+      Or to accept any origin matching the request connection's host, port, and scheme:
+
+          check_origin: :conn
+
       Or a custom MFA function:
 
           check_origin: {MyAppWeb.Auth, :my_check_origin?, []}
 
       The MFA is invoked with the request `%URI{}` as the first argument,
-      followed by arguments in the MFA list.
+      followed by arguments in the MFA list, and must return a boolean.
 
     * `:code_reloader` - enable or disable the code reloader. Defaults to your
       endpoint configuration
 
+    * `:drainer` - a keyword list or a custom MFA function returning a keyword list, for example:
+
+          {MyAppWeb.Socket, :drainer_configuration, []}
+
+      configuring how to drain sockets on application shutdown.
+      The goal is to notify all channels (and
+      LiveViews) clients to reconnect. The supported options are:
+
+      * `:batch_size` - How many clients to notify at once in a given batch.
+        Defaults to 10000.
+      * `:batch_interval` - The amount of time in milliseconds given for a
+        batch to terminate. Defaults to 2000ms.
+      * `:shutdown` - The maximum amount of time in milliseconds allowed
+        to drain all batches. Defaults to 30000ms.
+
+      For example, if you have 150k connections, the default values will
+      split them into 15 batches of 10k connections. Each batch takes
+      2000ms before the next batch starts. In this case, we will do everything
+      right under the maximum shutdown time of 30000ms. Therefore, as
+      you increase the number of connections, remember to adjust the shutdown
+      accordingly. Finally, after the socket drainer runs, the lower level
+      HTTP/HTTPS connection drainer will still run, and apply to all connections.
+      Set it to `false` to disable draining.
+
     * `:connect_info` - a list of keys that represent data to be copied from
-      the transport to be made available in the user socket `connect/3` callback
+      the transport to be made available in the user socket `connect/3` callback.
+      See the "Connect info" subsection for valid keys
 
-      The valid keys are:
+  ### Connect info
 
-        * `:peer_data` - the result of `Plug.Conn.get_peer_data/1`
-        * `:x_headers` - all request headers that have an "x-" prefix
-        * `:uri` - a `%URI{}` with information from the conn
-        * `{:session, session_config}` - the session information from `Plug.Conn`.
-          The `session_config` is an exact copy of the arguments given to `Plug.Session`.
-          This requires the "_csrf_token" to be given as request parameter with
-          the value of `URI.encode_www_form(Plug.CSRFProtection.get_csrf_token())`
-          when connecting to the socket. Otherwise the session will be `nil`.
+  The valid keys are:
 
-      Arbitrary keywords may also appear following the above valid keys, which
-      is useful for passing custom connection information to the socket.
+    * `:peer_data` - the result of `Plug.Conn.get_peer_data/1`
 
-      For example:
+    * `:trace_context_headers` - a list of all trace context headers. Supported
+      headers are defined by the [W3C Trace Context Specification](https://www.w3.org/TR/trace-context-1/).
+      These headers are necessary for libraries such as [OpenTelemetry](https://opentelemetry.io/) to extract
+      trace propagation information to know this request is part of a larger trace
+      in progress.
 
-          socket "/socket", AppWeb.UserSocket,
-            websocket: [
-              connect_info: [:peer_data, :x_headers, :uri, session: [store: :cookie]]
-            ]
+    * `:x_headers` - all request headers that have an "x-" prefix
 
-      With arbitrary keywords:
+    * `:uri` - a `%URI{}` with information from the conn
 
-          socket "/socket", AppWeb.UserSocket,
-            websocket: [
-              connect_info: [:uri, custom_value: "abcdef"]
-            ]
+    * `:user_agent` - the value of the "user-agent" request header
+
+    * `{:session, session_config}` - the session information from `Plug.Conn`.
+      The `session_config` is typically an exact copy of the arguments given
+      to `Plug.Session`. In order to validate the session, the "_csrf_token"
+      must be given as request parameter when connecting the socket with the
+      value of `URI.encode_www_form(Plug.CSRFProtection.get_csrf_token())`.
+      The CSRF token request parameter can be modified via the `:csrf_token_key`
+      option.
+
+      Additionally, `session_config` may be a MFA, such as
+      `{MyAppWeb.Auth, :get_session_config, []}`, to allow loading config in
+      runtime.
+
+  Arbitrary keywords may also appear following the above valid keys, which
+  is useful for passing custom connection information to the socket.
+
+  For example:
+
+  ```
+    socket "/socket", AppWeb.UserSocket,
+        websocket: [
+          connect_info: [:peer_data, :trace_context_headers, :x_headers, :uri, session: [store: :cookie]]
+        ]
+  ```
+
+  With arbitrary keywords:
+
+  ```
+    socket "/socket", AppWeb.UserSocket,
+        websocket: [
+          connect_info: [:uri, custom_value: "abcdef"]
+        ]
+  ```
 
   ## Websocket configuration
 
@@ -838,8 +897,13 @@ defmodule Phoenix.Endpoint do
     * `:timeout` - the timeout for keeping websocket connections
       open after it last received data, defaults to 60_000ms
 
-    * `:max_frame_size` - the maximum allowed frame size in bytes.
-      Supported from Cowboy 2.3 onwards, defaults to "infinity"
+    * `:max_frame_size` - the maximum allowed frame size in bytes,
+      defaults to "infinity"
+
+    * `:fullsweep_after` - the maximum number of garbage collections
+      before forcing a fullsweep for the socket process. You can set
+      it to `0` to force more frequent cleanups of your websocket
+      transport processes. Setting this option requires Erlang/OTP 24
 
     * `:compress` - whether to enable per message compression on
       all data frames, defaults to false
@@ -851,27 +915,37 @@ defmodule Phoenix.Endpoint do
 
           subprotocols: ["sip", "mqtt"]
 
+    * `:error_handler` - custom error handler for connection errors.
+      If `c:Phoenix.Socket.connect/3` returns an `{:error, reason}` tuple,
+      the error handler will be called with the error reason. For WebSockets,
+      the error handler must be a MFA tuple that receives a `Plug.Conn`, the
+      error reason, and returns a `Plug.Conn` with a response. For example:
+
+          socket "/socket", MySocket,
+              websocket: [
+                error_handler: {MySocket, :handle_error, []}
+              ]
+
+      and a `{:error, :rate_limit}` return may be handled on `MySocket` as:
+
+          def handle_error(conn, :rate_limit), do: Plug.Conn.send_resp(conn, 429, "Too many requests")
+
   ## Longpoll configuration
 
   The following configuration applies only to `:longpoll`:
 
     * `:window_ms` - how long the client can wait for new messages
-      in its poll request
+      in its poll request in milliseconds (ms). Defaults to `10_000`.
 
     * `:pubsub_timeout_ms` - how long a request can wait for the
-      pubsub layer to respond
+      pubsub layer to respond in milliseconds (ms). Defaults to `2000`.
 
     * `:crypto` - options for verifying and signing the token, accepted
       by `Phoenix.Token`. By default tokens are valid for 2 weeks
 
   """
   defmacro socket(path, module, opts \\ []) do
-    # Tear the alias to simply store the root in the AST.
-    # This will make Elixir unable to track the dependency
-    # between endpoint <-> socket and avoid recompiling the
-    # endpoint (alongside the whole project ) whenever the
-    # socket changes.
-    module = tear_alias(module)
+    module = Macro.expand(module, %{__CALLER__ | function: {:socket_dispatch, 2}})
 
     quote do
       @phoenix_sockets {unquote(path), unquote(module), unquote(opts)}
@@ -879,10 +953,8 @@ defmodule Phoenix.Endpoint do
   end
 
   @doc false
+  @deprecated "Phoenix.Endpoint.instrument/4 is deprecated and has no effect. Use :telemetry instead"
   defmacro instrument(_endpoint_or_conn_or_socket, _event, _runtime, _fun) do
-    IO.warn "Phoenix.Endpoint.instrument/4 is deprecated and has no effect. Use :telemetry instead",
-            Macro.Env.stacktrace(__CALLER__)
-
     :ok
   end
 
@@ -890,23 +962,15 @@ defmodule Phoenix.Endpoint do
   Checks if Endpoint's web server has been configured to start.
 
     * `otp_app` - The OTP app running the endpoint, for example `:my_app`
-    * `endpoint` - The endpoint module, for example `MyApp.Endpoint`
+    * `endpoint` - The endpoint module, for example `MyAppWeb.Endpoint`
 
   ## Examples
 
-      iex> Phoenix.Endpoint.server?(:my_app, MyApp.Endpoint)
+      iex> Phoenix.Endpoint.server?(:my_app, MyAppWeb.Endpoint)
       true
 
   """
   def server?(otp_app, endpoint) when is_atom(otp_app) and is_atom(endpoint) do
     Phoenix.Endpoint.Supervisor.server?(otp_app, endpoint)
   end
-
-  defp tear_alias({:__aliases__, meta, [h|t]}) do
-    alias = {:__aliases__, meta, [h]}
-    quote do
-      Module.concat([unquote(alias)|unquote(t)])
-    end
-  end
-  defp tear_alias(other), do: other
 end
