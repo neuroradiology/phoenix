@@ -4,7 +4,9 @@ defmodule Mix.Tasks.Phx.Gen.Live do
   @moduledoc """
   Generates LiveView, templates, and context for a resource.
 
-      mix phx.gen.live Accounts User users name:string age:integer
+  ```console
+  $ mix phx.gen.live Accounts User users name:string age:integer
+  ```
 
   The first argument is the context module.  The context is an Elixir module
   that serves as an API boundary for the given resource. A context often holds
@@ -19,9 +21,9 @@ defmodule Mix.Tasks.Phx.Gen.Live do
   types.  See `mix help phx.gen.schema` for more information on attributes.
 
   When this command is run for the first time, a `Components` module will be
-  created if it does not exist, along with the resource level LiveViews and
-  components, including `UserLive.Index`, `UserLive.Show`, and
-  `UserLive.FormComponent` modules for the new resource.
+  created if it does not exist, along with the resource level LiveViews,
+  including `UserLive.Index`, `UserLive.Show`, and `UserLive.Form` modules for
+  the new resource.
 
   > Note: A resource may also be split
   > over distinct contexts (such as `Accounts.User` and `Payments.User`).
@@ -32,8 +34,8 @@ defmodule Mix.Tasks.Phx.Gen.Live do
     * a schema in `lib/app/accounts/user.ex`, with a `users` table
     * a LiveView in `lib/app_web/live/user_live/show.ex`
     * a LiveView in `lib/app_web/live/user_live/index.ex`
-    * a LiveComponent in `lib/app_web/live/user_live/form_component.ex`
-    * a helpers module in `lib/app_web/live/live_helpers.ex` with a modal
+    * a LiveView in `lib/app_web/live/user_live/form.ex`
+    * a components module in `lib/app_web/components/core_components.ex`
 
   After file generation is complete, there will be output regarding required
   updates to the `lib/app_web/router.ex` file.
@@ -41,11 +43,9 @@ defmodule Mix.Tasks.Phx.Gen.Live do
       Add the live routes to your browser scope in lib/app_web/router.ex:
 
         live "/users", UserLive.Index, :index
-        live "/users/new", UserLive.Index, :new
-        live "/users/:id/edit", UserLive.Index, :edit
-
+        live "/users/new", UserLive.Form, :new
         live "/users/:id", UserLive.Show, :show
-        live "/users/:id/show/edit", UserLive.Show, :edit
+        live "/users/:id/edit", UserLive.Form, :edit
 
   ## The context app
 
@@ -66,7 +66,9 @@ defmodule Mix.Tasks.Phx.Gen.Live do
 
   Alternatively, the `--context-app` option may be supplied to the generator:
 
-      mix phx.gen.live Accounts User users --context-app warehouse
+  ```console
+  $ mix phx.gen.live Accounts User users --context-app warehouse
+  ```
 
   ## Web namespace
 
@@ -74,7 +76,9 @@ defmodule Mix.Tasks.Phx.Gen.Live do
   You can customize the web module namespace by passing the `--web` flag with a
   module name, for example:
 
-      mix phx.gen.live Accounts User users --web Sales
+  ```console
+  $ mix phx.gen.live Accounts User users --web Sales
+  ```
 
   Which would generate the LiveViews in `lib/app_web/live/sales/user_live/`,
   namespaced `AppWeb.Sales.UserLive` instead of `AppWeb.UserLive`.
@@ -86,7 +90,9 @@ defmodule Mix.Tasks.Phx.Gen.Live do
   to yourself. You can use the `--no-context` and `--no-schema` flags
   for file generation control.
 
-      mix phx.gen.live Accounts User users --no-context --no-schema
+  ```console
+  $ mix phx.gen.live Accounts User users --no-context --no-schema
+  ```
 
   In the cases above, tests are still generated, but they will all fail.
 
@@ -106,6 +112,8 @@ defmodule Mix.Tasks.Phx.Gen.Live do
         "mix phx.gen.live must be invoked from within your *_web application root directory"
       )
     end
+
+    Mix.Phoenix.ensure_live_view_compat!(__MODULE__)
 
     {context, schema} = Gen.Context.build(args)
     Gen.Context.prompt_for_code_injection(context)
@@ -147,9 +155,7 @@ defmodule Mix.Tasks.Phx.Gen.Live do
     [
       {:eex, "show.ex", Path.join(web_live, "show.ex")},
       {:eex, "index.ex", Path.join(web_live, "index.ex")},
-      {:eex, "form_component.ex", Path.join(web_live, "form_component.ex")},
-      {:eex, "index.html.heex", Path.join(web_live, "index.html.heex")},
-      {:eex, "show.html.heex", Path.join(web_live, "show.html.heex")},
+      {:eex, "form.ex", Path.join(web_live, "form.ex")},
       {:eex, "live_test.exs", Path.join(test_live, "#{schema.singular}_live_test.exs")},
       {:new_eex, "core_components.ex",
        Path.join([web_prefix, "components", "core_components.ex"])}
@@ -262,16 +268,17 @@ defmodule Mix.Tasks.Phx.Gen.Live do
   defp live_route_instructions(schema) do
     [
       ~s|live "/#{schema.plural}", #{inspect(schema.alias)}Live.Index, :index\n|,
-      ~s|live "/#{schema.plural}/new", #{inspect(schema.alias)}Live.Index, :new\n|,
-      ~s|live "/#{schema.plural}/:id/edit", #{inspect(schema.alias)}Live.Index, :edit\n\n|,
+      ~s|live "/#{schema.plural}/new", #{inspect(schema.alias)}Live.Form, :new\n|,
       ~s|live "/#{schema.plural}/:id", #{inspect(schema.alias)}Live.Show, :show\n|,
-      ~s|live "/#{schema.plural}/:id/show/edit", #{inspect(schema.alias)}Live.Show, :edit|
+      ~s|live "/#{schema.plural}/:id/edit", #{inspect(schema.alias)}Live.Form, :edit|
     ]
   end
 
   @doc false
   def inputs(%Schema{} = schema) do
-    Enum.map(schema.attrs, fn
+    schema.attrs
+    |> Enum.reject(fn {_key, type} -> type == :map end)
+    |> Enum.map(fn
       {_, {:references, _}} ->
         nil
 
@@ -288,7 +295,7 @@ defmodule Mix.Tasks.Phx.Gen.Live do
         ~s(<.input field={@form[#{inspect(key)}]} type="checkbox" label="#{label(key)}" />)
 
       {key, :text} ->
-        ~s(<.input field={@form[#{inspect(key)}]} type="text" label="#{label(key)}" />)
+        ~s(<.input field={@form[#{inspect(key)}]} type="textarea" label="#{label(key)}" />)
 
       {key, :date} ->
         ~s(<.input field={@form[#{inspect(key)}]} type="date" label="#{label(key)}" />)

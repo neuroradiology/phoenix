@@ -88,7 +88,7 @@ $ fly deploy
 
 Note: On Apple Silicon (M1) computers, docker runs cross-platform builds using qemu which might not always work. If you get a segmentation fault error like the following:
 
-```
+```console
  => [build  7/17] RUN mix deps.get --only
  => => # qemu: uncaught target signal 11 (Segmentation fault) - core dumped
 ```
@@ -390,11 +390,11 @@ $ fly scale count 2
 
 Refer to the [Fly.io Elixir documentation](https://fly.io/docs/getting-started/elixir) for additional information.
 
-[Working with Fly.io applications](https://fly.io/docs/getting-started/working-with-fly-apps/) covers things like:
+[The Fly.io docs](https://fly.io/docs/) covers things like:
 
-* Status and logs
-* Custom domains
-* Certificates
+* [Status](https://fly.io/docs/flyctl/status/) and [logs](https://fly.io/docs/monitoring/logging-overview/)
+* [Custom domains](https://fly.io/docs/networking/custom-domain/)
+* [Certificates](https://fly.io/docs/networking/custom-domain-api/)
 
 ## Troubleshooting
 

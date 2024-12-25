@@ -223,7 +223,7 @@ defmodule Phoenix.ChannelTest do
 
       test "connect in a task" do
         pid = self()
-        task = Task.async(fn -> 
+        task = Task.async(fn ->
           socket = socket(MyApp.UserSocket, "user_id", %{some: :assign}, test_process: pid)
           broadcast_from!(socket, "default", %{"foo" => "bar"})
           assert_push "default", %{"foo" => "bar"}
@@ -478,6 +478,10 @@ defmodule Phoenix.ChannelTest do
 
   @doc """
   Emulates the client leaving the channel.
+
+  By default this will crash the test process. Run
+  `Process.unlink(socket.channel_pid)` before this to prevent
+  this from happening. See [Leave and close](#module-leave-and-close).
   """
   @spec leave(Socket.t) :: reference()
   def leave(%Socket{} = socket) do
@@ -486,6 +490,10 @@ defmodule Phoenix.ChannelTest do
 
   @doc """
   Emulates the client closing the socket.
+
+  By default this will crash the test process. Run
+  `Process.unlink(socket.channel_pid)` before this to prevent
+  this from happening. See [Leave and close](#module-leave-and-close).
 
   Closing socket is synchronous and has a default timeout
   of 5000 milliseconds.
@@ -692,6 +700,8 @@ defmodule Phoenix.ChannelTest do
     do: struct
   def __stringify__(%{} = params),
     do: Enum.into(params, %{}, &stringify_kv/1)
+  def __stringify__(params) when is_list(params),
+    do: Enum.map(params, &__stringify__/1)
   def __stringify__(other),
     do: other
 

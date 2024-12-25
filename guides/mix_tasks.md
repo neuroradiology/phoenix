@@ -2,7 +2,7 @@
 
 There are currently a number of built-in Phoenix-specific and Ecto-specific [Mix tasks](`Mix.Task`) available to us within a newly-generated application. We can also create our own application specific tasks.
 
-> Note to learn more about `mix`, you can read Elixir's official [Introduction to Mix](https://elixir-lang.org/getting-started/mix-otp/introduction-to-mix.html).
+> Note to learn more about `mix`, you can read Elixir's official [Introduction to Mix](https://hexdocs.pm/elixir/introduction-to-mix.html).
 
 ## Phoenix tasks
 
@@ -154,7 +154,7 @@ $ mix phx.gen.json Blog Post posts title:string content:string
 When `mix phx.gen.json` is done creating files, it helpfully tells us that we need to add a line to our router file as well as run our Ecto migrations.
 
 ```console
-Add the resource to your :api scope in lib/hello_web/router.ex:
+Add the resource to the "/api" scope in lib/hello_web/router.ex:
 
     resources "/posts", PostController, except: [:new, :edit]
 
@@ -309,7 +309,7 @@ in its default location.
 Do you want to create it? [Y/n]
 ```
 
-By pressing confirming, a channel will be created, then you need to connect the socket in your endpoint:
+By confirming, a channel will be created, then you need to connect the socket in your endpoint:
 
 ```console
 Add the socket handler to your `lib/hello_web/endpoint.ex`, for example:
@@ -583,13 +583,13 @@ Don't forget to add your new repo to your supervision tree
 Notice that this task has updated `config/config.exs`. If we take a look, we'll see this extra configuration block for our new repo.
 
 ```elixir
-. . .
+...
 config :hello, OurCustom.Repo,
   username: "user",
   password: "pass",
   hostname: "localhost",
   database: "hello_repo",
-. . .
+...
 ```
 
 Of course, we'll need to change the login credentials to match what our database expects. We'll also need to change the config for other environments.
@@ -597,7 +597,7 @@ Of course, we'll need to change the login credentials to match what our database
 We certainly should follow the instructions and add our new repo to our supervision tree. In our `Hello` application, we would open up `lib/hello/application.ex`, and add our repo as a worker to the `children` list.
 
 ```elixir
-. . .
+...
 children = [
   Hello.Repo,
   # Our custom repo
@@ -605,7 +605,7 @@ children = [
   # Start the endpoint when the application starts
   HelloWeb.Endpoint,
 ]
-. . .
+...
 ```
 
 ### `mix ecto.gen.migration`
@@ -638,7 +638,7 @@ Notice that there is a single function `change/0` which will handle both forward
 What we want to do is create a `comments` table with a `body` column, a `word_count` column, and timestamp columns for `inserted_at` and `updated_at`.
 
 ```elixir
-. . .
+...
 def change do
   create table(:comments) do
     add :body, :string
@@ -646,7 +646,7 @@ def change do
     timestamps()
   end
 end
-. . .
+...
 ```
 
 Again, we can run this task with the `-r` flag and another repo if we need to.
@@ -707,13 +707,13 @@ $ mix ecto.migrate -n 2
 The `--step` option will behave the same way.
 
 ```console
-mix ecto.migrate --step 2
+$ mix ecto.migrate --step 2
 ```
 
 The `--to` option will run all migrations up to and including given version.
 
 ```console
-mix ecto.migrate --to 20150317170448
+$ mix ecto.migrate --to 20150317170448
 ```
 
 ### `mix ecto.rollback`
@@ -804,7 +804,7 @@ Indeed it does.
 If you want to make your new Mix task to use your application's infrastructure, you need to make sure the application is started and configure when Mix task is being executed. This is particularly useful if you need to access your database from within the Mix task. Thankfully, Mix makes it really easy for us via the `@requirements` module attribute:
 
 ```elixir
-  @requirements ["app.config"]
+  @requirements ["app.start"]
 
   @impl Mix.Task
   def run(_args) do
