@@ -35,7 +35,8 @@ defmodule Phoenix.CodeReloader.Server do
   end
 
   def handle_call(:check_symlinks, _from, state) do
-    if state.check_symlinks and Code.ensure_loaded?(Mix.Project) and not Mix.Project.umbrella?() do
+    if state.check_symlinks and Code.ensure_loaded?(Mix.Project) and not Mix.Project.umbrella?() and
+         File.dir?("priv") do
       priv_path = "#{Mix.Project.app_path()}/priv"
 
       case :file.read_link(priv_path) do
@@ -182,32 +183,27 @@ defmodule Phoenix.CodeReloader.Server do
     end
   end
 
-  if Version.match?(System.version(), "< 1.15.0-dev") do
-    defp purge_protocols(path) do
-      purge_modules(path)
-      Code.delete_path(path)
+  if Version.match?(System.version(), ">= 1.18.0-dev") do
+    defp warn_missing_mix_listener do
+      if Mix.Project.get() != Phoenix.MixProject do
+        IO.warn("""
+        a Mix listener expected by Phoenix.CodeReloader is missing.
+
+        Please add the listener to your mix.exs configuration, like so:
+
+            def project do
+              [
+                ...,
+                listeners: [Phoenix.CodeReloader]
+              ]
+            end
+
+        """)
+      end
     end
   else
-    defp purge_protocols(_path), do: :ok
-  end
-
-  defp warn_missing_mix_listener do
-    listeners_supported? = Version.match?(System.version(), ">= 1.18.0-dev")
-
-    if listeners_supported? do
-      IO.warn("""
-      a Mix listener expected by Phoenix.CodeReloader is missing.
-
-      Please add the listener to your mix.exs configuration, like so:
-
-          def project do
-            [
-              ...,
-              listeners: [Phoenix.CodeReloader]
-            ]
-          end
-
-      """)
+    defp warn_missing_mix_listener do
+      :ok
     end
   end
 
@@ -221,11 +217,6 @@ defmodule Phoenix.CodeReloader.Server do
        ) do
     config = Mix.Project.config()
     path = Mix.Project.consolidation_path(config)
-
-    # TODO: Remove this conditional when requiring Elixir v1.15+
-    if config[:consolidate_protocols] do
-      purge_protocols(path)
-    end
 
     mix_compile_deps(
       Mix.Dep.cached(),
@@ -317,7 +308,8 @@ defmodule Phoenix.CodeReloader.Server do
         raise """
         could not compile application: #{Mix.Project.config()[:app]}.
 
-        You must restart your server after changing the following files:
+        You must restart your server after changing configuration files or your dependencies.
+        In particular, the following files changed and must be recomputed on a server restart:
 
           * #{Enum.map_join(files, "\n  * ", &Path.relative_to_cwd/1)}
 
@@ -341,17 +333,21 @@ defmodule Phoenix.CodeReloader.Server do
     # TODO: The purge option may no longer be required from Elixir v1.18
     args = ["--purge-consolidation-path-if-stale", consolidation_path | compile_args]
 
-    result =
+    {status, diagnostics} =
       with_logger_app(config, fn ->
-        run_compilers(compilers, args, [])
+        run_compilers(compilers, args, :noop, [])
       end)
 
-    cond do
-      result == :error ->
-        exit({:shutdown, 1})
+    Proxy.diagnostics(Process.group_leader(), diagnostics)
 
-      result == :ok && config[:consolidate_protocols] ->
-        # TODO: Calling compile.protocols may no longer be required from Elixir v1.18
+    cond do
+      status == :error ->
+        if "--return-errors" not in args do
+          exit({:shutdown, 1})
+        end
+
+      status == :ok && config[:consolidate_protocols] ->
+        # TODO: Calling compile.protocols is no longer be required from Elixir v1.19
         Mix.Task.reenable("compile.protocols")
         Mix.Task.run("compile.protocols", [])
         :ok
@@ -394,25 +390,45 @@ defmodule Phoenix.CodeReloader.Server do
     end
   end
 
-  defp run_compilers([compiler | compilers], args, acc) do
-    with {status, diagnostics} <- Mix.Task.run("compile.#{compiler}", args) do
-      # Diagnostics are written to stderr and therefore not captured,
-      # so we send them to the group leader here
-      Proxy.diagnostics(Process.group_leader(), diagnostics)
-      {status, diagnostics}
-    end
-    |> case do
-      :error -> :error
-      {:error, _} -> :error
-      result -> run_compilers(compilers, args, [result | acc])
+  ## TODO: Replace this by Mix.Task.Compiler.run/2 on Elixir v1.19+
+
+  defp run_compilers([], _, status, diagnostics) do
+    {status, diagnostics}
+  end
+
+  defp run_compilers([compiler | rest], args, status, diagnostics) do
+    {new_status, new_diagnostics} = run_compiler(compiler, args)
+    diagnostics = diagnostics ++ new_diagnostics
+
+    case new_status do
+      :error -> {:error, diagnostics}
+      :ok -> run_compilers(rest, args, :ok, diagnostics)
+      :noop -> run_compilers(rest, args, status, diagnostics)
     end
   end
 
-  defp run_compilers([], _args, results) do
-    if :proplists.get_value(:ok, results, false) do
-      :ok
-    else
-      :noop
+  defp run_compiler(compiler, args) do
+    result = normalize(Mix.Task.run("compile.#{compiler}", args), compiler)
+    Enum.reduce(Mix.ProjectStack.pop_after_compiler(compiler), result, & &1.(&2))
+  end
+
+  defp normalize(result, name) do
+    case result do
+      {status, diagnostics} when status in [:ok, :noop, :error] and is_list(diagnostics) ->
+        {status, diagnostics}
+
+      # ok/noop can come from tasks that have already run
+      _ when result in [:ok, :noop] ->
+        {result, []}
+
+      _ ->
+        # TODO: Convert this to an error on v2.0
+        Mix.shell().error(
+          "warning: Mix compiler #{inspect(name)} was supposed to return " <>
+            "{:ok | :noop | :error, [diagnostic]} but it returned #{inspect(result)}"
+        )
+
+        {:noop, []}
     end
   end
 

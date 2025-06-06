@@ -42,7 +42,7 @@ All the client needs is a suitable library; see the [Client Libraries](#client-l
 Each client library communicates using one of the "transports" that Channels understand.
 Currently, that's either Websockets or long polling, but other transports may be added in the future.
 
-Unlike stateless HTTP connections, Channels support long-lived connections, each backed by a lightweight BEAM process, working in parallel and maintaining its own state.
+Unlike stateless HTTP connections, Channels support long-lived connections, each backed by a lightweight Erlang VM process, working in parallel and maintaining its own state.
 
 This architecture scales well; Phoenix Channels [can support millions of subscribers with reasonable latency on a single box](https://phoenixframework.org/blog/the-road-to-2-million-websocket-connections), passing hundreds of thousands of messages per second.
 And that capacity can be multiplied by adding more nodes to the cluster.
@@ -107,7 +107,8 @@ In your Phoenix app's `Endpoint` module, a `socket` declaration specifies which 
 ```elixir
 socket "/socket", HelloWeb.UserSocket,
   websocket: true,
-  longpoll: false
+  longpoll: false,
+  auth_token: true
 ```
 
 Phoenix comes with two default transports: websocket and longpoll. You can configure them directly via the `socket` declaration.
@@ -117,7 +118,7 @@ Phoenix comes with two default transports: websocket and longpoll. You can confi
 On the client side, you will establish a socket connection to the route above:
 
 ```javascript
-let socket = new Socket("/socket", {params: {token: window.userToken}})
+let socket = new Socket("/socket", {authToken: window.userToken})
 ```
 
 On the server, Phoenix will invoke `HelloWeb.UserSocket.connect/2`, passing your parameters and the initial socket state. Within the socket, you can authenticate and identify a socket connection and set default socket assigns. The socket is also where you define your channel routes.
@@ -158,7 +159,7 @@ PubSub is provided by the `Phoenix.PubSub` module. Interested parties can receiv
 This is useful to broadcast messages on channel and also for application development in general. For instance, letting all connected [live views](https://github.com/phoenixframework/phoenix_live_view) to know that a new comment has been added to a post.
 
 The PubSub system takes care of getting messages from one node to another so that they can be sent to all subscribers across the cluster.
-By default, this is done using [Phoenix.PubSub.PG2](https://hexdocs.pm/phoenix_pubsub/Phoenix.PubSub.PG2.html), which uses native BEAM messaging.
+By default, this is done using [Phoenix.PubSub.PG2](https://hexdocs.pm/phoenix_pubsub/Phoenix.PubSub.PG2.html), which uses native Erlang VM messaging.
 
 If your deployment environment does not support distributed Elixir or direct communication between servers, Phoenix also ships with a [Redis Adapter](https://hexdocs.pm/phoenix_pubsub_redis/Phoenix.PubSub.Redis.html) that uses Redis to exchange PubSub data. Please see the [Phoenix.PubSub docs](https://hexdocs.pm/phoenix_pubsub/Phoenix.PubSub.html) for more information.
 
@@ -383,9 +384,26 @@ That's all there is to our basic chat app. Fire up multiple browser tabs and you
 
 ## Using Token Authentication
 
-When we connect, we'll often need to authenticate the client. Fortunately, this is a 4-step process with [Phoenix.Token](https://hexdocs.pm/phoenix/Phoenix.Token.html).
+When we connect, we'll often need to authenticate the client. Fortunately, this is a 5-step process with [Phoenix.Token](https://hexdocs.pm/phoenix/Phoenix.Token.html).
 
-### Step 1 - Assign a Token in the Connection
+### Step 1 - Enable the `auth_token` functionality in the socket
+
+Phoenix supports a transport agnostic way to pass an authentication token to the server. To enable this, we need to pass the `:auth_token` option to the socket declaration in our `Endpoint` module.
+
+```elixir
+defmodule HelloWeb.Endpoint do
+  use Phoenix.Endpoint, otp_app: :hello
+
+  socket "/socket", HelloWeb.UserSocket,
+    websocket: true,
+    longpoll: false,
+    auth_token: true
+
+  ...
+end
+```
+
+### Step 2 - Assign a Token in the Connection
 
 Let's say we have an authentication plug in our app called `OurAuth`. When `OurAuth` authenticates a user, it sets a value for the `:current_user` key in `conn.assigns`. Since the `current_user` exists, we can simply assign the user's token in the connection for use in the layout. We can wrap that behavior up in a private function plug, `put_user_token/2`. This could also be put in its own module as well. To make this all work, we just add `OurAuth` and `put_user_token/2` to the browser pipeline.
 
@@ -408,23 +426,23 @@ end
 
 Now our `conn.assigns` contains the `current_user` and `user_token`.
 
-### Step 2 - Pass the Token to the JavaScript
+### Step 3 - Pass the Token to the JavaScript
 
 Next, we need to pass this token to JavaScript. We can do so inside a script tag in `lib/hello_web/components/layouts/root.html.heex` right above the app.js script, as follows:
 
 ```heex
 <script>window.userToken = "<%= assigns[:user_token] %>";</script>
-<script src={~p"/assets/app.js"}></script>
+<script src={~p"/assets/js/app.js"}></script>
 ```
 
-### Step 3 - Pass the Token to the Socket Constructor and Verify
+### Step 4 - Pass the Token to the Socket Constructor and Verify
 
-We also need to pass the `:params` to the socket constructor and verify the user token in the `connect/3` function. To do so, edit `lib/hello_web/channels/user_socket.ex`, as follows:
+We also need to pass the `:auth_token` to the socket constructor and verify the user token in the `connect/3` function. To do so, edit `lib/hello_web/channels/user_socket.ex`, as follows:
 
 ```elixir
-def connect(%{"token" => token}, socket, _connect_info) do
+def connect(_params_, socket, connect_info) do
   # max_age: 1209600 is equivalent to two weeks in seconds
-  case Phoenix.Token.verify(socket, "user socket", token, max_age: 1209600) do
+  case Phoenix.Token.verify(socket, "user socket", connect_info[:auth_token], max_age: 1209600) do
     {:ok, user_id} ->
       {:ok, assign(socket, :current_user, user_id)}
     {:error, reason} ->
@@ -436,17 +454,17 @@ end
 In our JavaScript, we can use the token set previously when constructing the Socket:
 
 ```javascript
-let socket = new Socket("/socket", {params: {token: window.userToken}})
+let socket = new Socket("/socket", {authToken: window.userToken})
 ```
 
 We used `Phoenix.Token.verify/4` to verify the user token provided by the client. `Phoenix.Token.verify/4` returns either `{:ok, user_id}` or `{:error, reason}`. We can pattern match on that return in a `case` statement. With a verified token, we set the user's id as the value to `:current_user` in the socket. Otherwise, we return `:error`.
 
-### Step 4 - Connect to the socket in JavaScript
+### Step 5 - Connect to the socket in JavaScript
 
 With authentication set up, we can connect to sockets and channels from JavaScript.
 
 ```javascript
-let socket = new Socket("/socket", {params: {token: window.userToken}})
+let socket = new Socket("/socket", {authToken: window.userToken})
 socket.connect()
 ```
 

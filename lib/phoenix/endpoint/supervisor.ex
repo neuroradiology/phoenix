@@ -27,14 +27,32 @@ defmodule Phoenix.Endpoint.Supervisor do
   @doc false
   def init({otp_app, mod, opts}) do
     default_conf = Phoenix.Config.merge(defaults(otp_app, mod), opts)
-    env_conf = config(otp_app, mod, default_conf)
+    env_conf = Phoenix.Config.from_env(otp_app, mod, default_conf)
 
     secret_conf =
       cond do
         Code.ensure_loaded?(mod) and function_exported?(mod, :init, 2) ->
           IO.warn(
-            "#{inspect(mod)}.init/2 is deprecated, use config/runtime.exs instead " <>
-              "or pass additional options when starting the endpoint in your supervision tree"
+            """
+            your #{inspect(mod)} defines a init/2 callback, which is now deprecated. \
+            This callback is invoked when your endpoint is initialized as part of your supervision tree. \
+            Instead, you should either:
+
+            1. Move all dynamic configuration to config/runtime.exs (preferred). For example:
+
+                # config/runtime.exs
+                import Config
+
+                if config_env() == :prod do
+                  config #{inspect(otp_app)}, #{inspect(mod)},
+                    http: [:inet6, port: System.fetch_env!("PORT")]
+                end
+
+            2. Pass the configuration you returned from the `init/2` callback \
+            as additional options when starting the endpoint in your supervision tree. \
+            For example: {#{inspect(mod)}, some_extra_options: true}
+            """,
+            []
           )
 
           {:ok, init_conf} = mod.init(:supervisor, env_conf)
@@ -88,6 +106,7 @@ defmodule Phoenix.Endpoint.Supervisor do
         server_children(mod, conf, server?) ++
         socket_children(mod, conf, :drainer_spec) ++
         watcher_children(mod, conf, server?)
+
     Supervisor.init(children, strategy: :one_for_one)
   end
 
@@ -191,17 +210,6 @@ defmodule Phoenix.Endpoint.Supervisor do
   end
 
   @doc """
-  The endpoint configuration used at compile time.
-  """
-  def config(otp_app, endpoint) do
-    config(otp_app, endpoint, defaults(otp_app, endpoint))
-  end
-
-  defp config(otp_app, endpoint, defaults) do
-    Phoenix.Config.from_env(otp_app, endpoint, defaults)
-  end
-
-  @doc """
   Checks if Endpoint's web server has been configured to start.
   """
   def server?(otp_app, endpoint) when is_atom(otp_app) and is_atom(endpoint) do
@@ -236,7 +244,7 @@ defmodule Phoenix.Endpoint.Supervisor do
       reloadable_apps: nil,
       # TODO: Gettext had a compiler in earlier versions,
       # but not since v0.20, so we can remove it here eventually.
-      reloadable_compilers: [:gettext, :elixir, :app],
+      reloadable_compilers: [:phoenix_live_view, :gettext, :elixir, :app],
       secret_key_base: nil,
       static_url: nil,
       url: [host: "localhost", path: "/"],

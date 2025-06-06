@@ -19,22 +19,21 @@ config :<%= @web_app_name %>, <%= @endpoint_module %>,
 
 # Configure esbuild (the version is required)
 config :esbuild,
-  version: "0.17.11",
+  version: "0.25.4",
   <%= @web_app_name %>: [
     args:
-      ~w(js/app.js --bundle --target=es2017 --outdir=../priv/static/assets --external:/fonts/* --external:/images/*),
+      ~w(js/app.js --bundle --target=es2022 --outdir=../priv/static/assets/js --external:/fonts/* --external:/images/*),
     cd: Path.expand("../apps/<%= @web_app_name %>/assets", __DIR__),
     env: %{"NODE_PATH" => Path.expand("../deps", __DIR__)}
   ]<% end %><%= if @css do %>
 
 # Configure tailwind (the version is required)
 config :tailwind,
-  version: "3.4.3",
+  version: "4.1.7",
   <%= @web_app_name %>: [
     args: ~w(
-      --config=tailwind.config.js
-      --input=css/app.css
-      --output=../priv/static/assets/app.css
+      --input=assets/css/app.css
+      --output=priv/static/assets/css/app.css
     ),
-    cd: Path.expand("../apps/<%= @web_app_name %>/assets", __DIR__)
+    cd: Path.expand("../apps/<%= @web_app_name %>", __DIR__)
   ]<% end %>

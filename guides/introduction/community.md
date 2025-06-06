@@ -14,7 +14,7 @@ There are a number of places to connect with community members at all experience
 
   * Follow the Phoenix Framework on [Twitter](https://twitter.com/elixirphoenix).
 
-The Security Working Group of the Erlang Ecosystem Foundation also publishes in-depth documents about [security best practices for Erlang, Elixir, and Phoenix](https://erlef.github.io/security-wg/web_app_security_best_practices_beam/).
+The Security Working Group of the Erlang Ecosystem Foundation also publishes in-depth documents about [security best practices for Erlang, Elixir, and Phoenix](https://security.erlef.org/web_app_security_best_practices_beam/).
 
 ## Books
 
@@ -34,7 +34,13 @@ The Security Working Group of the Erlang Ecosystem Foundation also publishes in-
 
 ## Screencasts/Courses
 
-  * [Phoenix LiveView Free Course (by The Pragmatic Studio - 2023)](https://pragmaticstudio.com/courses/phoenix-liveview)
+  * [Full-Stack Phoenix Course (by The Pragmatic Studio - 2025)](https://pragmaticstudio.com/courses/phoenix)
+
+  * [Free Bootcamp: Fullstack Elixir and Phoenix (by TechSchool - 2024)](https://techschool.dev/en/bootcamps/fullstack-elixir-and-phoenix)
+
+  * [Learn Phoenix LiveView (by George Arrowsmith - 2024)](https://phoenixliveview.com)
+
+  * [Phoenix LiveView Course (by The Pragmatic Studio - 2023)](https://pragmaticstudio.com/courses/phoenix-liveview)
 
   * [Build It With Phoenix video course (by Geoffrey Lessel - 2023)](https://builditwithphoenix.com)
 

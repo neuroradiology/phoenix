@@ -34,15 +34,15 @@ defmodule Phoenix.Integration.MixProject do
       {:phx_new, path: "../installer"},
       {:phoenix, path: "..", override: true},
       {:phoenix_ecto, "~> 4.5"},
-      {:esbuild, "~> 0.8", runtime: false},
+      {:esbuild, "~> 0.9", runtime: false},
       {:ecto_sql, "~> 3.10"},
       {:postgrex, ">= 0.0.0"},
       {:myxql, ">= 0.0.0"},
       {:tds, ">= 0.0.0"},
       {:ecto_sqlite3, ">= 0.0.0"},
       {:phoenix_html, "~> 4.1"},
-      {:phoenix_live_view, "~> 1.0.0"},
-      {:dns_cluster, "~> 0.1.1"},
+      {:phoenix_live_view, "~> 1.0"},
+      {:dns_cluster, "~> 0.2.0"},
       {:floki, ">= 0.30.0"},
       {:phoenix_live_reload, "~> 1.2"},
       {:phoenix_live_dashboard, "~> 0.8.3"},
@@ -55,15 +55,15 @@ defmodule Phoenix.Integration.MixProject do
       {:bcrypt_elixir, "~> 3.0"},
       {:argon2_elixir, "~> 4.0"},
       {:pbkdf2_elixir, "~> 2.0"},
-      {:tailwind, "~> 0.2"},
+      {:tailwind, "~> 0.3"},
       {:heroicons,
        github: "tailwindlabs/heroicons",
-       tag: "v2.1.1",
+       tag: "v2.2.0",
        sparse: "optimized",
        app: false,
        compile: false,
        depth: 1},
-      {:req, "~> 0.5.4"}
+      {:req, "~> 0.5"}
     ]
   end
 end

@@ -1,18 +1,10 @@
 # Deploying on Gigalixir
 
-
+Our main goal for this guide is to get a Phoenix application running on Gigalixir.
 
 ## What we'll need
 
 The only thing we'll need for this guide is a working Phoenix application. For those of us who need a simple application to deploy, please follow the [Up and Running guide](https://hexdocs.pm/phoenix/up_and_running.html).
-
-
-
-## Goals
-
-Our main goal for this guide is to get a Phoenix application running on Gigalixir.
-
-
 
 ## Steps
 
@@ -27,8 +19,6 @@ Let's separate this process into a few steps, so we can keep track of where we a
 - Deploy time!
 - Useful Gigalixir commands
 
-
-
 ## Initializing Git repository
 
 If you haven't already, we'll need to commit our files to git. We can do so by running the following commands in our project directory:
@@ -39,13 +29,9 @@ $ git add .
 $ git commit -m "Initial commit"
 ```
 
-
-
 ## Installing the Gigalixir CLI
 
 Follow the instructions [here](https://gigalixir.com/docs/getting-started-guide/) to install the command-line interface for your platform.
-
-
 
 ## Signing up for Gigalixir
 
@@ -75,12 +61,9 @@ And verify
 $ gigalixir account
 ```
 
-
-
 ## Creating and setting up our Gigalixir application
 
 There are two different ways to deploy a Phoenix app on Gigalixir: with mix or with Elixir's releases. In this guide, we'll be using Elixir's releases because it is the recommended way. For more information, see [Elixir Releases vs Mix](https://gigalixir.com/docs/modify-app/#elixir-releases-vs-mix). If you want to deploy with the mix method, follow the [Phoenix deploy with Mix Guide](https://gigalixir.com/docs/getting-started-guide/phoenix-mix-deploy).
-
 
 ### Creating a Gigalixir application
 
@@ -91,7 +74,6 @@ $ gigalixir create -n "your-app-name"
 ```
 
 Note: the app name cannot be changed afterwards. A random name is used if you do not provide one.
-
 
 ### Specifying versions
 
@@ -115,8 +97,6 @@ Finally, don't forget to commit:
 ```console
 $ git commit -m "Set versions"
 ```
-
-
 
 ## Provisioning a database
 
@@ -144,43 +124,25 @@ Verify that a `DATABASE_URL` and `POOL_SIZE` were created
 $ gigalixir config
 ```
 
-
-
 ## Making our Project ready for Gigalixir
 
 There's nothing we need to do to get our app running on Gigalixir, but for a production app, you probably want to enforce SSL.
 
-
-### Force HTTPS/SSL Connections
-
-To do that, see [Force SSL](https://hexdocs.pm/phoenix/using_ssl.html#force-ssl)
-
-
 ### Database Connection Security
-You may also want to use SSL for your database connection.
 
-For a free tier database, update your `Repo` config with:
+You may also want to use SSL for your database connection. In your `config/runtime.exs`:
+
 ```elixir
-ssl: true,
-ssl_opts: [
-  verify: :verify_none,
+ssl: [
+  verify: :verify_peer,
   cacerts: :public_key.cacerts_get()
 ]
 ```
 
-For a production database, use this instead:
-```elixir
-ssl: true,
-allowed_tls_versions: [:"tlsv1.2"],
-ssl_opts: [verify: :verify_none]
-```
-
-
-
 ## Deploy Time!
 
 Our project is now ready to be deployed on Gigalixir.
-Be sure you have everything commited to git and run the following command:
+Be sure you have everything committed to git and run the following command:
 
 ```console
 $ git push gigalixir
@@ -210,8 +172,6 @@ If everything looks good, let's take a look at your app running on Gigalixir
 $ gigalixir open
 ```
 
-
-
 ## Useful Gigalixir Commands
 
 Open a remote console
@@ -224,8 +184,6 @@ $ gigalixir ps:remote_console
 To set up clustering, see [Clustering Nodes](https://gigalixir.com/docs/cluster)
 
 For custom domains, scaling, jobs and other features, see the [Gigalixir Documentation](https://gigalixir.com/docs/).
-
-
 
 ## Troubleshooting
 

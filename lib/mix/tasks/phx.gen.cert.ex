@@ -10,9 +10,6 @@ defmodule Mix.Tasks.Phx.Gen.Cert do
   environment, such as running a development server on `localhost`.
   For production, staging, or testing servers on the public internet, obtain a
   proper certificate, for example from [Let's Encrypt](https://letsencrypt.org).
-
-  NOTE: when using Google Chrome, open chrome://flags/#allow-insecure-localhost
-  to enable the use of self-signed certificates on `localhost`.
   """
 
   @moduledoc """
@@ -125,7 +122,7 @@ defmodule Mix.Tasks.Phx.Gen.Cert do
     configuration in config/dev.exs:
 
       config #{inspect(app)}, #{inspect(Mix.Phoenix.web_module(base))}.Endpoint,
-        http: [port: 4000],
+        http: [port: String.to_integer(System.get_env("PORT") || "4000")],
         https: [
           port: 4001,
           cipher_suite: :strong,

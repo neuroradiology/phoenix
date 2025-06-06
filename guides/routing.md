@@ -35,6 +35,7 @@ defmodule HelloWeb.Router do
   # scope "/api", HelloWeb do
   #   pipe_through :api
   # end
+
   # ...
 end
 ```
@@ -197,13 +198,16 @@ Using `~p` for route paths ensures our application paths and URLs stay up to dat
 
 ### More on verified routes
 
-What about paths with query strings? You can either add query string key values directly, or provide a dictionary of key-value pairs, for example:
+What about paths with query strings? You can add query string key values directly, as a keyword list or map of values, for example:
 
 ```elixir
 ~p"/users/17?admin=true&active=false"
 "/users/17?admin=true&active=false"
 
 ~p"/users/17?#{[admin: true]}"
+"/users/17?admin=true"
+
+~p"/users/17?#{%{admin: true}}"
 "/users/17?admin=true"
 ```
 
@@ -603,7 +607,7 @@ defmodule HelloWeb.Router do
 end
 ```
 
-This means that all routes starting with `/jobs` will be sent to the `HelloWeb.BackgroundJob.Plug` module. Inside the plug, you can match on subroutes, such as `/pending` and `/active` that shows the status of certain jobs.
+This means that all routes starting with `/jobs` will be sent to the `BackgroundJob.Plug` module. Inside the plug, you can match on subroutes, such as `/pending` and `/active` that shows the status of certain jobs.
 
 We can even mix the [`forward/4`](`Phoenix.Router.forward/4`) macro with pipelines. If we wanted to ensure that the user was authenticated and was an administrator in order to see the jobs page, we could use the following in our router.
 
@@ -622,15 +626,7 @@ end
 
 This means the plugs in the `authenticate_user` and `ensure_admin` pipelines will be called before the `BackgroundJob.Plug` allowing them to send an appropriate response and halt the request accordingly.
 
-The `opts` that are received in the `init/1` callback of the Module Plug can be passed as a third argument. For example, maybe the background job lets you set the name of your application to be displayed on the page. This could be passed with:
-
-```elixir
-forward "/jobs", BackgroundJob.Plug, name: "Hello Phoenix"
-```
-
-There is a fourth `router_opts` argument that can be passed. These options are outlined in the `Phoenix.Router.scope/2` documentation.
-
-`BackgroundJob.Plug` can be implemented as any Module Plug discussed in the [Plug guide](plug.html). Note though it is not advised to forward to another Phoenix endpoint. This is because plugs defined by your app and the forwarded endpoint would be invoked twice, which may lead to errors.
+`BackgroundJob.Plug` can be implemented as any "Module Plug" discussed in the [Plug guide](plug.html). Note though it is not advised to forward to another Phoenix endpoint. This is because plugs defined by your app and the forwarded endpoint would be invoked twice, which may lead to errors.
 
 ## Summary
 

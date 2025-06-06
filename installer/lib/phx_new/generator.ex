@@ -178,8 +178,20 @@ defmodule Phx.New.Generator do
     tailwind = Keyword.get(opts, :tailwind, assets)
     mailer = Keyword.get(opts, :mailer, true)
     dev = Keyword.get(opts, :dev, false)
+    from_elixir_install = Keyword.get(opts, :from_elixir_install, false)
     phoenix_path = phoenix_path(project, dev, false)
     phoenix_path_umbrella_root = phoenix_path(project, dev, true)
+
+    # detect if we're inside a docker env, but if we're in github actions,
+    # we want to treat it like regular env for end-user testing purposes
+    inside_docker_env? =
+      Keyword.get_lazy(opts, :inside_docker_env, fn ->
+        if System.get_env("PHX_CI") do
+          false
+        else
+          File.exists?("/.dockerenv")
+        end
+      end)
 
     # We lowercase the database name because according to the
     # SQL spec, they are case insensitive unless quoted, which
@@ -199,8 +211,6 @@ defmodule Phx.New.Generator do
         :error -> adapter_config
       end
 
-    version = @phoenix_version
-
     binding = [
       app_name: project.app,
       app_module: inspect(project.app_mod),
@@ -210,10 +220,10 @@ defmodule Phx.New.Generator do
       web_app_name: project.web_app,
       endpoint_module: inspect(Module.concat(project.web_namespace, Endpoint)),
       web_namespace: inspect(project.web_namespace),
-      phoenix_dep: phoenix_dep(phoenix_path, version),
-      phoenix_dep_umbrella_root: phoenix_dep(phoenix_path_umbrella_root, version),
+      phoenix_dep: phoenix_dep(phoenix_path),
+      phoenix_dep_umbrella_root: phoenix_dep(phoenix_path_umbrella_root),
       phoenix_js_path: phoenix_js_path(phoenix_path),
-      phoenix_version: version,
+      phoenix_version: @phoenix_version,
       pubsub_server: pubsub_server,
       secret_key_base_dev: random_string(64),
       secret_key_base_test: random_string(64),
@@ -239,10 +249,32 @@ defmodule Phx.New.Generator do
       web_adapter_docs: web_adapter_docs,
       generators: nil_if_empty(project.generators ++ adapter_generators(adapter_config)),
       namespaced?: namespaced?(project),
-      dev: dev
+      dev: dev,
+      from_elixir_install: from_elixir_install,
+      elixir_install_otp_bin_path: from_elixir_install && elixir_install_otp_bin_path(),
+      elixir_install_bin_path: from_elixir_install && elixir_install_bin_path(),
+      inside_docker_env?: inside_docker_env?
     ]
 
-    %Project{project | binding: binding}
+    %{project | binding: binding}
+  end
+
+  def elixir_install_otp_bin_path do
+    "erl"
+    |> System.find_executable()
+    |> Path.split()
+    |> Enum.drop(-1)
+    |> Path.join()
+    |> Path.relative_to(System.user_home())
+  end
+
+  def elixir_install_bin_path do
+    "elixir"
+    |> System.find_executable()
+    |> Path.split()
+    |> Enum.drop(-1)
+    |> Path.join()
+    |> Path.relative_to(System.user_home())
   end
 
   defp namespaced?(project) do
@@ -436,20 +468,32 @@ defmodule Phx.New.Generator do
   defp phoenix_path_prefix(%Project{in_umbrella?: true}, true = _umbrella_root?), do: ".."
   defp phoenix_path_prefix(%Project{in_umbrella?: true}, false = _umbrella_root?), do: "../../../"
 
-  defp phoenix_dep("deps/phoenix", %{pre: ["dev"]}),
-    do: ~s[{:phoenix, github: "phoenixframework/phoenix", override: true}]
+  case @phoenix_version do
+    %Version{pre: "dev"} ->
+      defp phoenix_dep("deps/phoenix") do
+        ~s[{:phoenix, github: "phoenixframework/phoenix", override: true}]
+      end
 
-  defp phoenix_dep("deps/phoenix", version),
-    do: ~s[{:phoenix, "~> #{version}"}]
+    %Version{pre: ["rc", _]} ->
+      defp phoenix_dep("deps/phoenix") do
+        ~s[{:phoenix, "~> #{unquote(to_string(@phoenix_version))}", override: true}]
+      end
 
-  defp phoenix_dep(path, _version),
+    %Version{} ->
+      defp phoenix_dep("deps/phoenix") do
+        ~s[{:phoenix, "~> #{unquote(to_string(@phoenix_version))}"}]
+      end
+  end
+
+  defp phoenix_dep(path),
     do: ~s[{:phoenix, path: #{inspect(path)}, override: true}]
 
   defp phoenix_js_path("deps/phoenix"), do: "phoenix"
   defp phoenix_js_path(path), do: "../../#{path}/"
 
-  defp random_string(length),
-    do: :crypto.strong_rand_bytes(length) |> Base.encode64() |> binary_part(0, length)
+  defp random_string(length) do
+    :crypto.strong_rand_bytes(length) |> Base.encode64(padding: false) |> binary_part(0, length)
+  end
 
   # In the context of a HEEx attribute value, transforms a given message into a
   # dynamic `gettext` call or a fixed-value string attribute, depending on the
